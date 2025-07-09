@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Line, Pie } from 'react-chartjs-2';
 import BackButton from '../components/BackButton';
 import DateRangePicker from '../components/DateRangePicker';
+import { fetchWithToken } from '../utils/fetchWithToken';
 
-import './Dashboard.css'
+import './Dashboard.css';
 
 import {
   Chart as ChartJS,
@@ -27,19 +28,35 @@ ChartJS.register(
 );
 
 const Dashboard = () => {
+  const [lineData, setLineData] = useState(null);
+  const [pieData, setPieData] = useState(null);
+  const [totalSum, setTotalSum] = useState(0);
+
+  const today = new Date();
+  const oneMonthAgo = new Date();
+  oneMonthAgo.setMonth(today.getMonth() - 1);
+  const [startDate, setStartDate] = useState(oneMonthAgo);
+  const [endDate, setEndDate] = useState(today);
+
+  const formatDate = (iso) => {
+    const [y, m, d] = iso.split('-');
+    return `${d}.${m}.${y}`;
+  };
+
   const fetchDataByRange = () => {
     if (!startDate || !endDate) return;
 
     const start = startDate.toISOString().split('T')[0];
     const end = endDate.toISOString().split('T')[0];
 
-    fetch(`http://localhost:3000/api/total-expenses-range?start=${start}&end=${end}`)
+    // 📈 График 1: Расходы по дням
+    fetchWithToken(`http://localhost:3000/api/total-expenses-range?start=${start}&end=${end}`)
       .then(res => res.json())
       .then(data => {
         const labels = data.map(item => formatDate(item.date));
         const totals = data.map(item => item.total);
 
-        // Вычисляем накопленное среднее
+        // Накопленное среднее
         const cumulativeAverage = [];
         let sum = 0;
         for (let i = 0; i < totals.length; i++) {
@@ -47,9 +64,8 @@ const Dashboard = () => {
           cumulativeAverage.push((sum / (i + 1)).toFixed(2));
         }
 
-        // Вычисляем общую сумму
-        const totalSum = totals.reduce((acc, val) => acc + val, 0);
-        setTotalSum(totalSum);
+        const total = totals.reduce((acc, val) => acc + val, 0);
+        setTotalSum(total);
 
         setLineData({
           labels,
@@ -75,8 +91,8 @@ const Dashboard = () => {
         });
       });
 
-    // График 2: Расходы по категориям
-    fetch(`http://localhost:3000/api/expenses-by-category-range?start=${start}&end=${end}`)
+    // 🥧 График 2: По категориям
+    fetchWithToken(`http://localhost:3000/api/expenses-by-category-range?start=${start}&end=${end}`)
       .then(res => res.json())
       .then(data => {
         setPieData({
@@ -93,26 +109,11 @@ const Dashboard = () => {
           ]
         });
       });
-  }
-
-  const [lineData, setLineData] = useState(null);
-  const [pieData, setPieData] = useState(null);
-  const [totalSum, setTotalSum] = useState(0);
-
-  const today = new Date();
-  const oneMonthAgo = new Date();
-  oneMonthAgo.setMonth(today.getMonth() - 1);
-  const [startDate, setStartDate] = useState(oneMonthAgo);
-  const [endDate, setEndDate] = useState(today);
+  };
 
   useEffect(() => {
     fetchDataByRange();
   }, []);
-
-  const formatDate = (iso) => {
-    const [y, m, d] = iso.split('-');
-    return `${d}.${m}.${y}`;
-  };
 
   return (
     <div>
@@ -124,7 +125,7 @@ const Dashboard = () => {
         onEndChange={setEndDate}
         onSubmit={fetchDataByRange}
       />
-      <div className='chart-wrapper' style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem' }}>
+      <div className="chart-wrapper" style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem' }}>
         <div style={{ flex: 1, minWidth: '400px' }}>
           <h3>Расходы за выбранный период</h3>
           {lineData ? (
@@ -134,7 +135,9 @@ const Dashboard = () => {
                 Всего потрачено: {totalSum.toFixed(2)} BYN
               </p>
             </>
-          ) : <p>Загрузка...</p>}
+          ) : (
+            <p>Загрузка...</p>
+          )}
         </div>
         <div style={{ flex: 1, minWidth: '400px' }}>
           <h3>По категориям</h3>

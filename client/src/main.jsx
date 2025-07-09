@@ -1,24 +1,31 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import './index.css'
 
-import App from './App.jsx'
-import Stats from './pages/Stats.jsx'; 
-import Dashboard from './pages/Dashboard.jsx';
+import App from './App';
+import Dashboard from './pages/Dashboard';
+import Stats from './pages/Stats';
+import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
+import PrivateRoute from './components/PrivateRoute';
 
-import { ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
+import './index.css';
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
     <BrowserRouter>
       <Routes>
+        {/* Главная открыта для всех, с авторизацией внутри */}
         <Route path="/" element={<App />} />
-        <Route path="/stats" element={<Stats />} />
-        <Route path="/chart" element={<Dashboard />} />
+
+        {/* Приватные маршруты — только после входа */}
+        <Route path="/stats" element={<PrivateRoute><Stats /></PrivateRoute>} />
+    <Route path="/chart" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+    <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
+
+    {/* fallback — ВСЕ несуществующие маршруты сюда */}
+    <Route path="*" element={<NotFound />} />
       </Routes>
-      <ToastContainer position="top-right" autoClose={3000} theme="dark" />
     </BrowserRouter>
-  </StrictMode>,
-)
+  </React.StrictMode>
+);

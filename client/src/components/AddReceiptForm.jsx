@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { fetchWithToken } from '../utils/fetchWithToken'; // импорт универсального fetch
 
 const AddReceiptForm = ({ onAddReceipt }) => {
   const [formData, setFormData] = useState({
@@ -16,9 +17,8 @@ const AddReceiptForm = ({ onAddReceipt }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
 
-    fetch('http://localhost:3000/api/receipts', {
+    fetchWithToken('http://localhost:3000/api/receipts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...formData,
         amount: parseFloat(formData.amount)

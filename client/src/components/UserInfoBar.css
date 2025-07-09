@@ -1,0 +1,29 @@
+.user-info-inline {
+  display: flex;
+  align-items: center;
+  font-size: 0.9rem;
+  color: #ddd;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem 0.5rem 1rem;
+  white-space: nowrap;
+}
+
+.logout-button-inline {
+  background: none;
+  border: none;
+  color: #ff6b6b;
+  font-weight: bold;
+  cursor: pointer;
+  margin-left: 0.5rem;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.user-link {
+  font-weight: 600;
+}
+
+.user-link:hover {
+  text-decoration: underline;
+  color: #90e0ff;
+}

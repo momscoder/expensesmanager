@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
-
-import './CategorySelector.css'
+import { fetchWithToken } from '../utils/fetchWithToken'; // новый импорт
+import './CategorySelector.css';
 
 function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
   const [localCategories, setLocalCategories] = useState(categories || []);
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState('add'); // 'add' | 'edit'
+  const [modalMode, setModalMode] = useState('add');
   const [inputValue, setInputValue] = useState('');
-
 
   useEffect(() => {
     setLocalCategories(categories);
@@ -29,9 +28,8 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
     if (!trimmed) return;
 
     if (modalMode === 'add') {
-      const res = await fetch('http://localhost:3000/api/categories', {
+      const res = await fetchWithToken('http://localhost:3000/api/categories', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed })
       });
       const result = await res.json();
@@ -49,9 +47,8 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
       const oldCategory = categories.find(c => c.name === value);
       if (!oldCategory) return;
 
-      const res = await fetch('http://localhost:3000/api/categories/rename', {
+      const res = await fetchWithToken('http://localhost:3000/api/categories/rename', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldName: value, newName: trimmed })
       });
       const result = await res.json();
@@ -77,7 +74,7 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
     const confirmDelete = window.confirm(`Удалить категорию "${value}"?`);
     if (!confirmDelete) return;
 
-    const res = await fetch(`http://localhost:3000/api/categories/${categoryToDelete.id}`, {
+    const res = await fetchWithToken(`http://localhost:3000/api/categories/${categoryToDelete.id}`, {
       method: 'DELETE'
     });
 
@@ -102,9 +99,7 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
         >
           <option value="">— выбери категорию —</option>
           {localCategories.map((c) => (
-            <option key={c.id} value={c.name}>
-              {c.name}
-            </option>
+            <option key={c.id} value={c.name}>{c.name}</option>
           ))}
         </select>
 
@@ -127,7 +122,6 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
         </div>
       </div>
 
-
       {modalOpen && (
         <div style={modalStyles.overlay}>
           <div style={modalStyles.modal}>
@@ -141,16 +135,21 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
               autoFocus
             />
             <div style={modalStyles.buttonGroup}>
-              <button style={{ ...modalStyles.button, background: '#007acc', color: '#fff' }} onClick={handleSave}>
+              <button
+                style={{ ...modalStyles.button, background: '#007acc', color: '#fff' }}
+                onClick={handleSave}
+              >
                 💾 Сохранить
               </button>
-              <button style={{ ...modalStyles.button, background: '#444', color: '#fff' }} onClick={closeModal}>
+              <button
+                style={{ ...modalStyles.button, background: '#444', color: '#fff' }}
+                onClick={closeModal}
+              >
                 ❌ Отмена
               </button>
             </div>
           </div>
         </div>
-
       )}
     </div>
   );
