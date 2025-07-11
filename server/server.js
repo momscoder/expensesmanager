@@ -5,7 +5,7 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getReceipt } from 'checkchecker';
-import loadReceipt from './checkloader.js';
+import loadReceipt, { receiptExists } from './checkloader.js';
 import crypto from 'crypto';
 
 const app = express();
@@ -14,6 +14,12 @@ const SECRET = process.env.JWT_SECRET || 'very-secret-key';
 
 app.use(cors());
 app.use(express.json());
+
+// Централизованный обработчик ошибок
+app.use((err, req, res, next) => {
+  console.error(err.stack); // Логирование ошибки
+  res.status(err.status || 500).send(err.message || 'Внутренняя ошибка сервера');
+});
 
 // 📦 Подключение к SQLite
 const db = new sqlite3.Database('./receipts.db', (err) => {
@@ -185,11 +191,26 @@ app.post('/api/login', (req, res) => {
 app.use('/api', verifyToken);
 
 // 📦 Получение данных по чеку
-app.post('/api/data', (req, res) => {
-  const { date } = req.body;
-  getReceipt(req.user.id, date)
-    .then((data) => loadReceipt(data, date, req.user.id)
-      .then((msg) => res.status(200).json({ message: msg }))
+app.post('/api/data', async (req, res) => {
+  const { uid, date } = req?.body;
+  const userId = req?.user?.id;
+  if(uid === undefined || date === undefined || userId === undefined) {
+    return res.status(400).json({message : `Invalid data`});
+  }
+
+  // костыль, потом сделать опцию форсированной загрузки
+  if (await receiptExists(db, userId, uid, date)) {
+    return res.status(409).json({message : `Чек уже обработан`});
+  }
+
+  getReceipt(uid, date)
+    .then((data) => loadReceipt(db, userId, data, date, uid)
+      .then((code) =>  {
+          if(isNaN(code)) code = 0;
+          const statusVary = [400, 409, 200];
+          const messageVary = ['Не удалось получить чек', 'Чек уже обработан', 'Данные успешно сохранены'];
+          res.status(statusVary[code]).json({ message: messageVary[code] })
+      })
     )
     .catch(() => res.status(404).json({ message: 'Ошибка при загрузке чека' }));
 });

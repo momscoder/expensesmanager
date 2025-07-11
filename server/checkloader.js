@@ -1,64 +1,65 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-
 import crypto from 'crypto';
+
+function cleanProductName(str) {
+  return str.replace(/^\d+/, '');
+}
 
 function generateReceiptHash(uid, date) {
   const raw = `${uid}_${date}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
-async function initDatabase() {
-  return open({
-    filename: './receipts.db',
-    driver: sqlite3.Database,
+export function receiptExists(db, userId, uid, date) {
+  const receiptHash = generateReceiptHash(uid, date);
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT 1 FROM used_receipts WHERE receipt_hash = ? AND user_id = ?`,
+      [receiptHash, userId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(!!row); 
+      }
+    );
   });
 }
 
-function removeDigitsBeforeLetters(str) {
-  return str.replace(/^\d+/, '');
-}
-
-async function loadReceipt(data, date, uid) {
-
-  if(data?.message?.positions == undefined || date == undefined || uid == undefined) {
-    console.log('data undefined');
+/**
+ * Сохраняет чек в базу
+ * @param {*} db — sqlite-соединение
+ * @param {*} userId — id пользователя
+ * @param {*} data — объект с positions
+ * @param {*} date — дата покупки
+ * @param {*} uid — UID чека
+ * @returns {number} 0 - невалидно, 1 - уже был, 2 - сохранён
+ */
+export default async function loadReceipt(db, userId, data, date, uid) {
+  if (!data?.message?.positions || !date || !uid || !userId) {
+    console.log('❌ Invalid data');
     return 0;
   }
 
-  const db = await initDatabase();
-
-  const receiptUid = uid;
-  const hash = generateReceiptHash(receiptUid, date);
-
-  const existing = await db.get(
-    `SELECT 1 FROM used_receipts WHERE receipt_hash = ?`,
-    hash
-  );
-  if (existing) {
-    console.log('🚫 Чек уже обработан');
+  if (await receiptExists(db, userId, uid, date)) {
+    console.log('🚫 Чек уже был');
     return 1;
   }
 
-  const pos = JSON.parse(data.message.positions);
-  for (const { product_name, amount } of pos) {
+  const positions = JSON.parse(data.message.positions);
+  for (const { product_name, amount } of positions) {
     if (product_name && amount) {
       await db.run(
-        `INSERT INTO receipts (date, product, amount) VALUES (?, ?, ?)`,
-        date,
-        removeDigitsBeforeLetters(product_name),
-        amount
+        'INSERT INTO receipts (date, product, amount, category, user_id) VALUES (?, ?, ?, ?, ?)',
+        [date,
+          cleanProductName(product_name),
+          amount,
+          "",
+          userId]
       );
     }
   }
 
-  await db.run(
-    `INSERT INTO used_receipts (receipt_hash) VALUES (?)`,
-    hash
-  );
+  const hash = generateReceiptHash(uid, date);
+  await db.run(`INSERT INTO used_receipts (receipt_hash, user_id) VALUES (?, ?)`, [hash, userId]);
 
-  console.log('📥 Данные успешно сохранены в SQLite');
+  console.log('📥 Чек загружен');
   return 2;
 }
-
-export default loadReceipt;

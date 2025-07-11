@@ -9,6 +9,9 @@ import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 import PrivateRoute from './components/PrivateRoute';
 
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -26,6 +29,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     {/* fallback — ВСЕ несуществующие маршруты сюда */}
     <Route path="*" element={<NotFound />} />
       </Routes>
+      <ToastContainer position="top-right" autoClose={3000} theme="dark" />
     </BrowserRouter>
   </React.StrictMode>
 );

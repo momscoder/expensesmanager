@@ -56,6 +56,7 @@ function Stats() {
   const handleCategoryChange = async (id, newCategory) => {
     await fetchWithToken(`http://localhost:3000/api/update-category/${id}`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category: newCategory }),
     });
 

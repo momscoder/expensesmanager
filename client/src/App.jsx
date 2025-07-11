@@ -24,7 +24,7 @@ function App() {
     const token = localStorage.getItem('token');
     if (!token) {
       setShowAuth(true);
-    } 
+    }
   }, []);
 
   const goToStats = () => navigate('/stats');
@@ -37,25 +37,13 @@ function App() {
     try {
       const response = await fetchWithToken('http://localhost:3000/api/data', {
         method: 'POST',
-        body: JSON.stringify({ date: inputDate })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid: inputUi, date: inputDate })
       });
-
       const data = await response.json();
+      if (response.status === 200) toast.success(data.message);
+      else toast.error(data.message);
 
-      switch (data.message) {
-        case 0:
-          toast.error('Неизвестная ошибка');
-          break;
-        case 1:
-          toast.error('Чек уже обработан');
-          break;
-        case 2:
-          toast.success('Данные успешно сохранены');
-          break;
-        default:
-          toast.error('Ошибка при выполнении запроса');
-          break;
-      }
     } catch (error) {
       console.error('Ошибка при отправке данных:', error);
       toast.error('Ошибка при выполнении запроса');
@@ -82,15 +70,15 @@ function App() {
 
           <DateInput value={inputDate} onChange={setInputDate} />
 
-          <button className = 'form-button' type="submit" disabled={loading}>
+          <button className='form-button' type="submit" disabled={loading}>
             {loading ? 'Загрузка...' : 'Загрузить чек'}
           </button>
 
-          <button className = 'form-button' type="button" onClick={goToStats}>
+          <button className='form-button' type="button" onClick={goToStats}>
             База данных
           </button>
 
-          <button className = 'form-button' type="button" onClick={goToChart}>
+          <button className='form-button' type="button" onClick={goToChart}>
             Графики
           </button>
 

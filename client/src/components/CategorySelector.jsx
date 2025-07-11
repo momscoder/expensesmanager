@@ -30,6 +30,7 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
     if (modalMode === 'add') {
       const res = await fetchWithToken('http://localhost:3000/api/categories', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed })
       });
       const result = await res.json();
@@ -49,6 +50,7 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
 
       const res = await fetchWithToken('http://localhost:3000/api/categories/rename', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldName: value, newName: trimmed })
       });
       const result = await res.json();
