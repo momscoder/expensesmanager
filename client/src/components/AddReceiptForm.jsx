@@ -1,76 +1,71 @@
-import React, { useState } from 'react';
-import { fetchWithToken } from '../utils/fetchWithToken'; // импорт универсального fetch
+import { useState } from 'react';
+import { fetchWithToken } from '../utils/fetchWithToken';
 
 const AddReceiptForm = ({ onAddReceipt }) => {
-  const [formData, setFormData] = useState({
-    date: '',
-    product: '',
-    amount: '',
-    category: ''
-  });
+  const [product, setProduct] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!product.trim() || !amount.trim()) return;
 
-    fetchWithToken('http://localhost:3000/api/receipts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...formData,
-        amount: parseFloat(formData.amount)
-      })
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Ошибка при добавлении');
-        return res.json();
-      })
-      .then(data => {
-        console.log('Добавлено:', data);
-        setFormData({ date: '', product: '', amount: '', category: '' });
-        if (onAddReceipt) onAddReceipt(data);
-      })
-      .catch(err => console.error(err.message));
+    setLoading(true);
+    try {
+      const res = await fetchWithToken('/api/receipts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product, amount: parseFloat(amount), date })
+      });
+
+      if (res.ok) {
+        const newReceipt = await res.json();
+        onAddReceipt(newReceipt);
+        setProduct('');
+        setAmount('');
+        setDate(new Date().toISOString().split('T')[0]);
+      } else {
+        alert('Ошибка при добавлении записи');
+      }
+    } catch (error) {
+      console.error('Error adding receipt:', error);
+      alert('Ошибка при добавлении записи');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <input
-        type="date"
-        name="date"
-        value={formData.date}
-        onChange={handleChange}
-        required
-      />
-      <input
-        type="text"
-        name="product"
-        placeholder="Продукт"
-        value={formData.product}
-        onChange={handleChange}
-        required
-      />
-      <input
-        type="number"
-        name="amount"
-        placeholder="Сумма"
-        value={formData.amount}
-        onChange={handleChange}
-        required
-      />
-      <input
-        type="text"
-        name="category"
-        placeholder="Категория (необязательно)"
-        value={formData.category}
-        onChange={handleChange}
-      />
-      <button type="submit">Добавить</button>
-    </form>
+    <div>
+      <h3>Добавить новую запись</h3>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <input
+          type="text"
+          placeholder="Название товара"
+          value={product}
+          onChange={(e) => setProduct(e.target.value)}
+          required
+        />
+        <input
+          type="number"
+          step="0.01"
+          placeholder="Сумма"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          required
+        />
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          required
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Добавление...' : 'Добавить'}
+        </button>
+      </form>
+    </div>
   );
 };
 

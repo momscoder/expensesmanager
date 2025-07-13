@@ -1,85 +1,172 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchWithToken } from '../utils/fetchWithToken';
+import './SessionList.css';
 
 const SessionList = () => {
   const [sessions, setSessions] = useState([]);
-  const [currentJTI, setCurrentJTI] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
+    const fetchSessions = async () => {
+      try {
+        const response = await fetchWithToken('/api/sessions');
+        if (response.ok) {
+          const data = await response.json();
+          setSessions(data);
+        }
+      } catch (error) {
+        console.error('Error fetching sessions:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      setCurrentJTI(payload.jti); 
-    } catch {
-      localStorage.removeItem('token');
-      window.location.href = '/';
-      return;
-    }
-
-    fetchWithToken('http://localhost:3000/api/sessions')
-      .then(res => res?.json())
-      .then(data => data && setSessions(data))
-      .catch(() => alert('Ошибка загрузки сессий'));
+    fetchSessions();
   }, []);
 
-  const handleRevoke = async (jti) => {
-    if (!window.confirm('Завершить эту сессию?')) return;
-    setLoading(true);
-
+  const handleTerminateSession = async (jti) => {
     try {
-      const res = await fetchWithToken(`http://localhost:3000/api/sessions/${jti}`, {
+      const res = await fetchWithToken(`/api/sessions/${jti}`, {
         method: 'DELETE'
       });
-      if (res) setSessions(prev => prev.filter(s => s.jti !== jti));
-    } catch {
-      alert('Ошибка при завершении');
-    } finally {
-      setLoading(false);
+
+      if (!res || !res.ok) {
+        throw new Error('Ошибка при завершении сессии');
+      }
+
+      setSessions(prev => prev.filter(session => session.jti !== jti));
+    } catch (error) {
+      console.error('Error terminating session:', error);
+      if (error.message === 'Authentication failed') {
+        alert('Сессия истекла. Пожалуйста, войдите снова.');
+        window.location.reload();
+      } else {
+        alert('Ошибка при завершении сессии');
+      }
     }
   };
 
+  const formatUserAgent = (userAgent) => {
+    if (!userAgent || userAgent === 'Unknown') return 'Неизвестно';
+    
+    // Try to extract browser and OS info
+    const browserMatch = userAgent.match(/(chrome|firefox|safari|edge|opera|ie)\/?\s*(\d+)/i);
+    const osMatch = userAgent.match(/(windows|mac|linux|android|ios|iphone|ipad)/i);
+    
+    let browser = browserMatch ? `${browserMatch[1]} ${browserMatch[2]}` : 'Браузер';
+    let os = osMatch ? osMatch[1] : '';
+    
+    return `${browser}${os ? ` • ${os}` : ''}`;
+  };
+
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="session-list-container">
+        <div className="session-list-loading">
+          <div className="loading-spinner"></div>
+          <p>Загрузка сессий...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ marginTop: '2rem' }}>
-      <h3 style={{ color: '#eee' }}>Активные сессии</h3>
+    <div className="session-list-container">
+      <div className="session-list-header">
+        <h3 className="session-list-title">Активные сессии</h3>
+        <span className="session-count">Кол-во сессий: {sessions.length}</span>
+      </div>
 
       {sessions.length === 0 ? (
-        <p style={{ color: '#ccc' }}>Нет активных устройств</p>
+        <div className="session-list-empty">
+          <div className="empty-icon">🔒</div>
+          <p>Нет активных сессий</p>
+          <small>Все сессии будут отображаться здесь</small>
+        </div>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', color: '#eee' }}>
-          <thead>
-            <tr style={{ background: '#222', borderBottom: '1px solid #444' }}>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}>IP</th>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}>Устройство</th>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}>Вход</th>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}></th>
+        <div className="session-table-wrapper">
+          <table className="session-table">
+            <thead className="session-table-header">
+              <tr>
+                <th className="session-table-cell session-table-cell--device">
+                  <span className="table-header-text">Устройство</span>
+                </th>
+                <th className="session-table-cell session-table-cell--ip">
+                  <span className="table-header-text">IP адрес</span>
+                </th>
+                <th className="session-table-cell session-table-cell--date">
+                  <span className="table-header-text">Создана</span>
+                </th>
+                <th className="session-table-cell session-table-cell--actions">
+                  <span className="table-header-text">Действия</span>
+                </th>
             </tr>
           </thead>
-          <tbody>
-            {sessions.map(({ jti, ip, user_agent, issued_at }) => (
-              <tr key={jti} style={{ borderBottom: '1px solid #333' }}>
-                <td style={{ padding: '0.5rem' }}>{ip}</td>
-                <td style={{ padding: '0.5rem' }}>{user_agent}</td>
-                <td style={{ padding: '0.5rem' }}>{new Date(issued_at).toLocaleString()}</td>
-                <td style={{ padding: '0.5rem' }}>
-                  {jti === currentJTI ? (
-                    <span style={{ color: '#66ccff' }}>Вы</span>
-                  ) : (
+            <tbody className="session-table-body">
+              {sessions.map((session, index) => (
+                <tr key={session.jti} className="session-table-row">
+                  <td className="session-table-cell session-table-cell--device">
+                    <div className="device-info">
+                      <div className="device-icon">💻</div>
+                      <div className="device-details">
+                        <div className="device-name">{formatUserAgent(session.user_agent)}</div>
+                        <div className="device-user-agent">{session.user_agent || 'Неизвестно'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="session-table-cell session-table-cell--ip">
+                    <div className="ip-address">
+                      <span className="ip-text">{session.ip || 'Неизвестно'}</span>
+                    </div>
+                  </td>
+                  <td className="session-table-cell session-table-cell--date">
+                    <div className="session-date">
+                      <div className="date-text">{formatDate(session.issued_at)}</div>
+                      <div className="date-relative">
+                        {(() => {
+                          const now = new Date();
+                          const sessionDate = new Date(session.issued_at);
+                          const diffMs = now - sessionDate;
+                          const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+                          const diffDays = Math.floor(diffHours / 24);
+                          
+                          if (diffDays > 0) {
+                            return `${diffDays} дн. назад`;
+                          } else if (diffHours > 0) {
+                            return `${diffHours} ч. назад`;
+                          } else {
+                            return 'Только что';
+                          }
+                        })()}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="session-table-cell session-table-cell--actions">
                     <button
-                      onClick={() => handleRevoke(jti)}
-                      disabled={loading}
-                      style={{ padding: '0.3rem 0.6rem' }}
+                      onClick={() => handleTerminateSession(session.jti)}
+                      className="session-terminate-btn"
+                      title="Завершить сессию"
                     >
-                      Завершить
+                      <span className="terminate-icon">❌</span>
+                      <span className="terminate-text">Завершить</span>
                     </button>
-                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

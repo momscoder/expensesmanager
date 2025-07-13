@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { fetchWithToken } from '../utils/fetchWithToken';
 import './UserInfoBar.css';
 
 const UserInfoBar = () => {
@@ -8,20 +9,29 @@ const UserInfoBar = () => {
     let email = '';
     let exp = '';
     try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        email = payload.email;
-        exp = new Date(payload.exp * 1000).toLocaleString();
-    } catch {
+        const tokenParts = token.split('.');
+        if (tokenParts.length !== 3) {
+            console.warn('Invalid JWT token format');
+            return null;
+        }
+        
+        const payload = JSON.parse(atob(tokenParts[1]));
+        email = payload.email || '';
+        exp = payload.exp ? new Date(payload.exp * 1000).toLocaleString() : '';
+        
+        if (!email || !exp) {
+            console.warn('Invalid JWT payload');
+            return null;
+        }
+    } catch (error) {
+        console.warn('Error parsing JWT token:', error);
         return null;
     }
 
     const logout = async () => {
         try {
-            await fetch('http://localhost:3000/api/logout', {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${localStorage.getItem('token')}`
-                }
+            await fetchWithToken('/api/logout', {
+                method: 'POST'
             });
         } catch (e) {
             console.warn('Logout error:', e.message);
@@ -31,11 +41,10 @@ const UserInfoBar = () => {
         }
     };
 
-
     return (
         <span className="user-info-inline">
             👤 <Link to="/profile" className="user-link">{email}</Link> | истекает: <strong>{exp}</strong>
-            <button onClick={logout} className="logout-button-inline">Выйти</button>
+            <button type="button" onClick={logout} className="logout-button-inline">Выйти</button>
         </span>
     );
 };

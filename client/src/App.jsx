@@ -35,18 +35,35 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await fetchWithToken('http://localhost:3000/api/data', {
+      const response = await fetchWithToken('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uid: inputUi, date: inputDate })
       });
+      
+      if (!response) {
+        toast.error('Ошибка при выполнении запроса');
+        return;
+      }
+      
       const data = await response.json();
-      if (response.status === 200) toast.success(data.message);
-      else toast.error(data.message);
+      if (response.status === 200) {
+        toast.success(data.message);
+        // Clear form on success
+        setInputUi('');
+        setInputDate('');
+      } else {
+        toast.error(data.message || 'Ошибка при отправке данных');
+      }
 
     } catch (error) {
       console.error('Ошибка при отправке данных:', error);
-      toast.error('Ошибка при выполнении запроса');
+      if (error.message === 'Authentication failed') {
+        toast.error('Сессия истекла. Пожалуйста, войдите снова.');
+        setShowAuth(true);
+      } else {
+        toast.error('Ошибка при выполнении запроса');
+      }
     } finally {
       setLoading(false);
     }

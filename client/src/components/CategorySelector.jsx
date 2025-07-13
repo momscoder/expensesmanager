@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchWithToken } from '../utils/fetchWithToken'; // новый импорт
+import { fetchWithToken } from '../utils/fetchWithToken';
 import './CategorySelector.css';
 
 function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
@@ -7,6 +7,7 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('add');
   const [inputValue, setInputValue] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setLocalCategories(categories);
@@ -27,44 +28,53 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
 
-    if (modalMode === 'add') {
-      const res = await fetchWithToken('http://localhost:3000/api/categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed })
-      });
-      const result = await res.json();
-      if (result.id && result.name) {
-        const updated = [...localCategories, result];
-        setLocalCategories(updated);
-        onCategoriesUpdate(updated);
-        closeModal();
-      } else {
-        alert(result.error);
-      }
-    }
+    setLoading(true);
 
-    if (modalMode === 'edit') {
-      const oldCategory = categories.find(c => c.name === value);
-      if (!oldCategory) return;
-
-      const res = await fetchWithToken('http://localhost:3000/api/categories/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldName: value, newName: trimmed })
-      });
-      const result = await res.json();
-      if (result.success) {
-        const updated = localCategories.map(c =>
-          c.id === oldCategory.id ? { ...c, name: trimmed } : c
-        );
-        setLocalCategories(updated);
-        onChange(trimmed);
-        onCategoriesUpdate(updated);
-        closeModal();
-      } else {
-        alert(result.error || 'Ошибка при переименовании');
+    try {
+      if (modalMode === 'add') {
+        const res = await fetchWithToken('/api/categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: trimmed })
+        });
+        const result = await res.json();
+        if (result.id && result.name) {
+          const updated = [...localCategories, result];
+          setLocalCategories(updated);
+          onCategoriesUpdate(updated);
+          closeModal();
+        } else {
+          alert(result.error);
+        }
       }
+
+      if (modalMode === 'edit') {
+        const oldCategory = categories.find(c => c.name === value);
+        if (!oldCategory) return;
+
+        const res = await fetchWithToken('/api/categories/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oldName: value, newName: trimmed })
+        });
+        const result = await res.json();
+        if (result.success) {
+          const updated = localCategories.map(c =>
+            c.id === oldCategory.id ? { ...c, name: trimmed } : c
+          );
+          setLocalCategories(updated);
+          onChange(trimmed);
+          onCategoriesUpdate(updated);
+          closeModal();
+        } else {
+          alert(result.error || 'Ошибка при переименовании');
+        }
+      }
+    } catch (error) {
+      console.error('Error saving category:', error);
+      alert('Произошла ошибка при сохранении');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -76,18 +86,23 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
     const confirmDelete = window.confirm(`Удалить категорию "${value}"?`);
     if (!confirmDelete) return;
 
-    const res = await fetchWithToken(`http://localhost:3000/api/categories/${categoryToDelete.id}`, {
-      method: 'DELETE'
-    });
+    try {
+      const res = await fetchWithToken(`/api/categories/${categoryToDelete.id}`, {
+        method: 'DELETE'
+      });
 
-    if (res.ok) {
-      const updated = localCategories.filter(c => c.id !== categoryToDelete.id);
-      setLocalCategories(updated);
-      onChange('');
-      onCategoriesUpdate(updated);
-    } else {
-      const err = await res.json();
-      alert(err.error || 'Ошибка при удалении');
+      if (res.ok) {
+        const updated = localCategories.filter(c => c.id !== categoryToDelete.id);
+        setLocalCategories(updated);
+        onChange('');
+        onCategoriesUpdate(updated);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Ошибка при удалении');
+      }
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      alert('Произошла ошибка при удалении');
     }
   };
 
@@ -125,27 +140,30 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
       </div>
 
       {modalOpen && (
-        <div style={modalStyles.overlay}>
-          <div style={modalStyles.modal}>
+        <div className="category-modal-overlay" onClick={closeModal}>
+          <div className="category-modal" onClick={(e) => e.stopPropagation()}>
             <h3>{modalMode === 'add' ? 'Добавить категорию' : 'Редактировать категорию'}</h3>
             <input
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Название категории"
-              style={modalStyles.input}
+              className="category-modal-input"
               autoFocus
+              disabled={loading}
             />
-            <div style={modalStyles.buttonGroup}>
+            <div className="category-modal-buttons">
               <button
-                style={{ ...modalStyles.button, background: '#007acc', color: '#fff' }}
+                className="category-modal-button primary"
                 onClick={handleSave}
+                disabled={loading || !inputValue.trim()}
               >
-                💾 Сохранить
+                {loading ? '💾 Сохранение...' : '💾 Сохранить'}
               </button>
               <button
-                style={{ ...modalStyles.button, background: '#444', color: '#fff' }}
+                className="category-modal-button secondary"
                 onClick={closeModal}
+                disabled={loading}
               >
                 ❌ Отмена
               </button>
@@ -158,50 +176,3 @@ function CategorySelector({ value, onChange, categories, onCategoriesUpdate }) {
 }
 
 export default CategorySelector;
-
-const modalStyles = {
-  overlay: {
-    position: 'fixed',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 999
-  },
-  modal: {
-    background: '#1e1e1e',
-    color: '#fff',
-    padding: '1.5rem',
-    borderRadius: '10px',
-    minWidth: '300px',
-    width: '100%',
-    maxWidth: '400px',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1rem'
-  },
-  input: {
-    width: '100%',
-    padding: '10px',
-    borderRadius: '6px',
-    border: '1px solid #444',
-    background: '#2c2c2c',
-    color: '#fff',
-    fontSize: '1rem',
-    boxSizing: 'border-box'
-  },
-  buttonGroup: {
-    display: 'flex',
-    gap: '10px'
-  },
-  button: {
-    flex: 1,
-    padding: '10px',
-    borderRadius: '6px',
-    border: 'none',
-    fontWeight: 'bold',
-    cursor: 'pointer'
-  }
-};

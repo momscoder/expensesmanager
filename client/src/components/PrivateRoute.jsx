@@ -5,14 +5,22 @@ const PrivateRoute = ({ children }) => {
   if (!token) return <Navigate to="/" replace />;
 
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+    const tokenParts = token.split('.');
+    if (tokenParts.length !== 3) {
+      localStorage.removeItem('token');
+      return <Navigate to="/" replace />;
+    }
+    
+    const payload = JSON.parse(atob(tokenParts[1]));
     const now = Date.now() / 1000;
-    if (payload.exp < now) {
+    
+    if (!payload.exp || payload.exp < now) {
       localStorage.removeItem('token'); // удалить истёкший токен
       return <Navigate to="/" replace />;
     }
     return children;
-  } catch {
+  } catch (error) {
+    console.warn('Error parsing JWT token:', error);
     localStorage.removeItem('token'); // если токен битый
     return <Navigate to="/" replace />;
   }

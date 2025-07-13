@@ -1,4 +1,3 @@
-// server.js
 import express from 'express';
 import sqlite3 from 'sqlite3';
 import cors from 'cors';
@@ -8,17 +7,134 @@ import { getReceipt } from 'checkchecker';
 import loadReceipt, { receiptExists } from './checkloader.js';
 import crypto from 'crypto';
 
-const app = express();
+const app = express(); 
 const port = 3000;
 const SECRET = process.env.JWT_SECRET || 'very-secret-key';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Limit request size
+
+// Security headers middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+  next();
+});
+
+// Simple rate limiting
+const rateLimit = new Map();
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
+const MAX_REQUESTS = 100; // Max requests per window
+
+app.use((req, res, next) => {
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+  const now = Date.now();
+  
+  if (!rateLimit.has(clientIP)) {
+    rateLimit.set(clientIP, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+  } else {
+    const clientData = rateLimit.get(clientIP);
+    if (now > clientData.resetTime) {
+      clientData.count = 1;
+      clientData.resetTime = now + RATE_LIMIT_WINDOW;
+    } else {
+      clientData.count++;
+    }
+    
+    if (clientData.count > MAX_REQUESTS) {
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+  }
+  
+  next();
+});
+
+// Input validation and sanitization functions
+const sanitizeString = (str) => {
+  if (typeof str !== 'string') return '';
+  return str.trim().replace(/[<>]/g, ''); // Remove potential HTML tags
+};
+
+const sanitizeNumber = (num) => {
+  const parsed = parseInt(num, 10);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const sanitizeFloat = (num) => {
+  const parsed = parseFloat(num);
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const validateDate = (dateStr) => {
+  if (!dateStr || typeof dateStr !== 'string') return false;
+  const date = new Date(dateStr);
+  return !isNaN(date.getTime()) && dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
+};
+
+const validateUUID = (uuid) => {
+  if (!uuid || typeof uuid !== 'string') return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+};
+
+// Validation functions
+const validateLogin = (login) => {
+  if (!login || typeof login !== 'string') return false;
+  const loginRegex = /^[a-zA-Z0-9_-]{3,20}$/;
+  return loginRegex.test(login.trim());
+};
+
+const validatePassword = (password) => {
+  if (!password || typeof password !== 'string') return false;
+  return password.length >= 5 && password.length <= 100; // Add upper limit
+};
+
+// Check if username already exists
+const checkUsernameExists = (username, excludeUserId = null) => {
+  return new Promise((resolve, reject) => {
+    if (!validateLogin(username)) {
+      reject(new Error('Invalid username format'));
+      return;
+    }
+    
+    let query = 'SELECT id FROM users WHERE email = ?';
+    let params = [username];
+    
+    if (excludeUserId) {
+      const sanitizedId = sanitizeNumber(excludeUserId);
+      if (sanitizedId <= 0) {
+        reject(new Error('Invalid user ID'));
+        return;
+      }
+      query += ' AND id != ?';
+      params.push(sanitizedId);
+    }
+    
+    db.get(query, params, (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(!!row); // Returns true if username exists, false otherwise
+      }
+    });
+  });
+};
 
 // Централизованный обработчик ошибок
 app.use((err, req, res, next) => {
   console.error(err.stack); // Логирование ошибки
-  res.status(err.status || 500).send(err.message || 'Внутренняя ошибка сервера');
+  
+  // Don't expose internal errors to client
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const message = isDevelopment ? err.message : 'Внутренняя ошибка сервера';
+  
+  res.status(err.status || 500).json({ 
+    error: message,
+    ...(isDevelopment && { stack: err.stack })
+  });
 });
 
 // 📦 Подключение к SQLite
@@ -157,29 +273,72 @@ function cleanupRevokedTokens() {
 // 🧾 Авторизация
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
-  const hash = await bcrypt.hash(password, 10);
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const agent = req.headers['user-agent'] || 'Unknown';
+  
+  // Sanitize inputs
+  const sanitizedEmail = sanitizeString(email);
+  const sanitizedPassword = sanitizeString(password);
+  
+  // Validate login
+  if (!validateLogin(sanitizedEmail)) {
+    return res.status(400).json({ error: 'Логин должен содержать 3-20 символов (буквы, цифры, _ или -)' });
+  }
+  
+  // Validate password
+  if (!validatePassword(sanitizedPassword)) {
+    return res.status(400).json({ error: 'Пароль должен содержать минимум 5 символов' });
+  }
+  
+  try {
+    // Check for duplicate username
+    const usernameExists = await checkUsernameExists(sanitizedEmail);
+    if (usernameExists) {
+      return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
+    }
+    
+    const hash = await bcrypt.hash(sanitizedPassword, 10);
+    const ip = sanitizeString(req.headers['x-forwarded-for'] || req.socket.remoteAddress);
+    const agent = sanitizeString(req.headers['user-agent'] || 'Unknown');
 
-  db.run('INSERT INTO users (email, password) VALUES (?, ?)', [email, hash], function (err) {
-    if (err) return res.status(500).json({ error: 'Email уже используется' });
+    db.run('INSERT INTO users (email, password) VALUES (?, ?)', [sanitizedEmail, hash], function (err) {
+      if (err) {
+        console.error('Database error during registration:', err);
+        return res.status(500).json({ error: 'Ошибка при создании аккаунта' });
+      }
     const newUserId = this.lastID;
     db.get('SELECT * FROM users WHERE id = ?', [newUserId], (e, user) => {
       if (e || !user) return res.status(500).json({ error: 'Ошибка получения профиля' });
       const token = generateToken(user, ip, agent);
       res.json({ token });
-    })
+      });
   });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Ошибка сервера при регистрации' });
+  }
 });
 
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const agent = req.headers['user-agent'] || 'Unknown';
+  
+  // Sanitize inputs
+  const sanitizedEmail = sanitizeString(email);
+  const sanitizedPassword = sanitizeString(password);
+  
+  // Validate inputs
+  if (!validateLogin(sanitizedEmail)) {
+    return res.status(400).json({ error: 'Неверный формат логина' });
+  }
+  
+  if (!validatePassword(sanitizedPassword)) {
+    return res.status(400).json({ error: 'Неверный формат пароля' });
+  }
+  
+  const ip = sanitizeString(req.headers['x-forwarded-for'] || req.socket.remoteAddress);
+  const agent = sanitizeString(req.headers['user-agent'] || 'Unknown');
 
-  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+  db.get('SELECT * FROM users WHERE email = ?', [sanitizedEmail], async (err, user) => {
     if (err || !user) return res.status(401).json({ error: 'Пользователь не найден' });
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await bcrypt.compare(sanitizedPassword, user.password);
     if (!valid) return res.status(401).json({ error: 'Неверный пароль' });
 
     const token = generateToken(user, ip, agent);
@@ -233,18 +392,36 @@ app.get('/api/categories', (req, res) => {
 
 app.post('/api/categories', (req, res) => {
   const { name } = req.body;
-  db.run('INSERT INTO categories (name, user_id) VALUES (?, ?)', [name.trim(), req.user.id], function (err) {
+  
+  // Sanitize and validate category name
+  const sanitizedName = sanitizeString(name);
+  if (!sanitizedName || !sanitizedName.trim() || sanitizedName.length > 50) {
+    return res.status(400).json({ error: 'Название категории обязательно и не должно превышать 50 символов' });
+  }
+
+  db.run('INSERT INTO categories (name, user_id) VALUES (?, ?)', [sanitizedName.trim(), req.user.id], function (err) {
     if (err) return res.status(500).json({ error: 'Ошибка сервера' });
-    res.status(201).json({ id: this.lastID, name });
+    res.status(201).json({ id: this.lastID, name: sanitizedName.trim() });
   });
 });
 
 app.post('/api/categories/rename', (req, res) => {
   const { oldName, newName } = req.body;
-  db.run('UPDATE categories SET name = ? WHERE name = ? AND user_id = ?', [newName, oldName, req.user.id], (err) => {
+  
+  // Sanitize and validate category names
+  const sanitizedOldName = sanitizeString(oldName);
+  const sanitizedNewName = sanitizeString(newName);
+  
+  if (!sanitizedOldName || !sanitizedNewName || 
+      !sanitizedOldName.trim() || !sanitizedNewName.trim() || 
+      sanitizedNewName.length > 50) {
+    return res.status(400).json({ error: 'Названия категорий обязательны и не должны превышать 50 символов' });
+  }
+
+  db.run('UPDATE categories SET name = ? WHERE name = ? AND user_id = ?', [sanitizedNewName.trim(), sanitizedOldName.trim(), req.user.id], (err) => {
     if (err) return res.status(500).json({ error: 'Ошибка переименования' });
 
-    db.run('UPDATE receipts SET category = ? WHERE category = ? AND user_id = ?', [newName, oldName, req.user.id], (err2) => {
+    db.run('UPDATE receipts SET category = ? WHERE category = ? AND user_id = ?', [sanitizedNewName.trim(), sanitizedOldName.trim(), req.user.id], (err2) => {
       if (err2) return res.status(500).json({ error: 'Ошибка обновления расходов' });
       res.json({ success: true });
     });
@@ -254,11 +431,17 @@ app.post('/api/categories/rename', (req, res) => {
 app.delete('/api/categories/:id', (req, res) => {
   const { id } = req.params;
 
-  db.get('SELECT name FROM categories WHERE id = ? AND user_id = ?', [id, req.user.id], (err, row) => {
+  // Sanitize and validate category ID
+  const sanitizedId = sanitizeNumber(id);
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID категории' });
+  }
+
+  db.get('SELECT name FROM categories WHERE id = ? AND user_id = ?', [sanitizedId, req.user.id], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Категория не найдена' });
     const categoryName = row.name;
 
-    db.run('DELETE FROM categories WHERE id = ? AND user_id = ?', [id, req.user.id], (err) => {
+    db.run('DELETE FROM categories WHERE id = ? AND user_id = ?', [sanitizedId, req.user.id], (err) => {
       if (err) return res.status(500).json({ error: 'Ошибка при удалении категории' });
 
       db.run('UPDATE receipts SET category = NULL WHERE category = ? AND user_id = ?', [categoryName, req.user.id], (err2) => {
@@ -274,7 +457,19 @@ app.post('/api/update-category/:id', (req, res) => {
   const { id } = req.params;
   const { category } = req.body;
 
-  db.run('UPDATE receipts SET category = ? WHERE id = ? AND user_id = ?', [category.trim(), id, req.user.id], function (err) {
+  // Sanitize and validate inputs
+  const sanitizedId = sanitizeNumber(id);
+  const sanitizedCategory = category ? sanitizeString(category) : null;
+  
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID записи' });
+  }
+  
+  if (sanitizedCategory && sanitizedCategory.length > 50) {
+    return res.status(400).json({ error: 'Название категории не должно превышать 50 символов' });
+  }
+
+  db.run('UPDATE receipts SET category = ? WHERE id = ? AND user_id = ?', [sanitizedCategory ? sanitizedCategory.trim() : null, sanitizedId, req.user.id], function (err) {
     if (err) return res.status(500).json({ error: 'Ошибка' });
     if (this.changes === 0) return res.status(404).json({ error: 'Запись не найдена' });
     res.json({ message: 'Категория обновлена' });
@@ -284,20 +479,57 @@ app.post('/api/update-category/:id', (req, res) => {
 // ➕ Добавление расхода вручную
 app.post('/api/receipts', (req, res) => {
   const { date, product, amount, category } = req.body;
+  
+  // Sanitize and validate inputs
+  const sanitizedDate = sanitizeString(date);
+  const sanitizedProduct = sanitizeString(product);
+  const sanitizedAmount = sanitizeFloat(amount);
+  const sanitizedCategory = category ? sanitizeString(category) : null;
+  
+  // Validate required fields
+  if (!validateDate(sanitizedDate)) {
+    return res.status(400).json({ error: 'Неверный формат даты (YYYY-MM-DD)' });
+  }
+  
+  if (!sanitizedProduct || !sanitizedProduct.trim() || sanitizedProduct.length > 200) {
+    return res.status(400).json({ error: 'Название продукта обязательно и не должно превышать 200 символов' });
+  }
+  
+  if (sanitizedAmount <= 0 || sanitizedAmount > 999999.99) {
+    return res.status(400).json({ error: 'Сумма должна быть больше 0 и меньше 1,000,000' });
+  }
+  
+  if (sanitizedCategory && sanitizedCategory.length > 50) {
+    return res.status(400).json({ error: 'Название категории не должно превышать 50 символов' });
+  }
 
   db.run(
     'INSERT INTO receipts (date, product, amount, category, user_id) VALUES (?, ?, ?, ?, ?)',
-    [date, product, amount, category || null, req.user.id],
+    [sanitizedDate, sanitizedProduct.trim(), sanitizedAmount, sanitizedCategory ? sanitizedCategory.trim() : null, req.user.id],
     function (err) {
       if (err) return res.status(500).json({ error: 'Ошибка сервера' });
-      res.status(201).json({ id: this.lastID, date, product, amount, category });
+      res.status(201).json({ 
+        id: this.lastID, 
+        date: sanitizedDate, 
+        product: sanitizedProduct.trim(), 
+        amount: sanitizedAmount, 
+        category: sanitizedCategory ? sanitizedCategory.trim() : null 
+      });
     }
   );
 });
 
 // 🗑️ Удаление расхода
 app.delete('/api/receipts/:id', (req, res) => {
-  db.run('DELETE FROM receipts WHERE id = ? AND user_id = ?', [req.params.id, req.user.id], function (err) {
+  const { id } = req.params;
+  
+  // Sanitize and validate receipt ID
+  const sanitizedId = sanitizeNumber(id);
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID записи' });
+  }
+  
+  db.run('DELETE FROM receipts WHERE id = ? AND user_id = ?', [sanitizedId, req.user.id], function (err) {
     if (err) return res.status(500).json({ error: 'Ошибка при удалении' });
     if (this.changes === 0) return res.status(404).json({ error: 'Запись не найдена' });
     res.json({ message: 'Удалено' });
@@ -307,6 +539,16 @@ app.delete('/api/receipts/:id', (req, res) => {
 // 📈 График расходов по категориям
 app.get('/api/expenses-by-category-range', (req, res) => {
   const { start, end } = req.query;
+  
+  // Validate date parameters
+  if (!validateDate(start) || !validateDate(end)) {
+    return res.status(400).json({ error: 'Неверный формат даты (YYYY-MM-DD)' });
+  }
+  
+  // Ensure start date is before end date
+  if (start > end) {
+    return res.status(400).json({ error: 'Начальная дата должна быть раньше конечной' });
+  }
 
   db.all(
     `SELECT COALESCE(category, 'Без категории') AS category, SUM(amount) AS total
@@ -324,6 +566,16 @@ app.get('/api/expenses-by-category-range', (req, res) => {
 
 app.get('/api/total-expenses-range', (req, res) => {
   const { start, end } = req.query;
+  
+  // Validate date parameters
+  if (!validateDate(start) || !validateDate(end)) {
+    return res.status(400).json({ error: 'Неверный формат даты (YYYY-MM-DD)' });
+  }
+  
+  // Ensure start date is before end date
+  if (start > end) {
+    return res.status(400).json({ error: 'Начальная дата должна быть раньше конечной' });
+  }
 
   db.all(
     `SELECT date, SUM(amount) AS total
@@ -343,8 +595,37 @@ app.patch('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const { email, password } = req.body;
 
-  if (parseInt(id) !== req.user.id) {
+  // Sanitize and validate user ID
+  const sanitizedId = sanitizeNumber(id);
+  if (sanitizedId !== req.user.id) {
     return res.status(403).json({ error: 'Недостаточно прав' });
+  }
+
+  // Sanitize inputs
+  const sanitizedEmail = email ? sanitizeString(email) : null;
+  const sanitizedPassword = password ? sanitizeString(password) : null;
+
+  // Validate login if provided
+  if (sanitizedEmail && !validateLogin(sanitizedEmail)) {
+    return res.status(400).json({ error: 'Логин должен содержать 3-20 символов (буквы, цифры, _ или -)' });
+  }
+
+  // Validate password if provided
+  if (sanitizedPassword && sanitizedPassword.trim() && !validatePassword(sanitizedPassword)) {
+    return res.status(400).json({ error: 'Пароль должен содержать минимум 5 символов' });
+  }
+
+  // Check for duplicate username
+  if (sanitizedEmail && sanitizedEmail !== req.user.email) { // Only check if email is being changed
+    try {
+      const usernameExists = await checkUsernameExists(sanitizedEmail, req.user.id);
+      if (usernameExists) {
+        return res.status(409).json({ error: 'Пользователь с таким логином уже существует' });
+      }
+    } catch (error) {
+      console.error('Error checking username:', error);
+      return res.status(500).json({ error: 'Ошибка проверки логина' });
+    }
   }
 
   db.get('SELECT * FROM users WHERE id = ?', [id], async (err, user) => {
@@ -354,14 +635,14 @@ app.patch('/api/users/:id', async (req, res) => {
     const params = [];
     let emailChanged = false;
 
-    if (email && email !== user.email) {
+    if (sanitizedEmail && sanitizedEmail !== user.email) {
       updates.push('email = ?');
-      params.push(email);
+      params.push(sanitizedEmail);
       emailChanged = true;
     }
 
-    if (password && password.trim()) {
-      const hashed = await bcrypt.hash(password, 10);
+    if (sanitizedPassword && sanitizedPassword.trim()) {
+      const hashed = await bcrypt.hash(sanitizedPassword, 10);
       updates.push('password = ?');
       params.push(hashed);
     }
@@ -376,10 +657,8 @@ app.patch('/api/users/:id', async (req, res) => {
 
     db.run(sql, params, function (err) {
       if (err) {
-        if (err.message.includes('UNIQUE')) {
-          return res.status(409).json({ error: 'Email уже используется' });
-        }
-        return res.status(500).json({ error: 'Ошибка обновления' });
+        console.error('Database error during user update:', err);
+        return res.status(500).json({ error: 'Ошибка обновления профиля' });
       }
 
       db.get('SELECT * FROM users WHERE id = ?', [id], (e, freshUser) => {
@@ -430,6 +709,12 @@ app.patch('/api/users/:id', async (req, res) => {
 
 app.post('/api/logout', verifyToken, (req, res) => {
   const { jti } = req.user;
+  
+  // Validate JTI format
+  if (!validateUUID(jti)) {
+    return res.status(400).json({ error: 'Неверный формат токена' });
+  }
+  
   db.run('INSERT INTO revoked_tokens (jti) VALUES (?)', [jti]);
   db.run('DELETE FROM active_tokens WHERE jti = ?', [jti]);
   res.json({ message: 'Выход выполнен' });
@@ -471,6 +756,11 @@ app.get('/api/sessions', verifyToken, (req, res) => {
 
 app.delete('/api/sessions/:jti', verifyToken, (req, res) => {
   const { jti } = req.params;
+  
+  // Validate JTI format
+  if (!validateUUID(jti)) {
+    return res.status(400).json({ error: 'Неверный формат токена сессии' });
+  }
 
   db.get('SELECT * FROM active_tokens WHERE jti = ? AND user_id = ?', [jti, req.user.id], (err, session) => {
     if (err || !session) return res.status(404).json({ error: 'Сессия не найдена' });
@@ -483,6 +773,11 @@ app.delete('/api/sessions/:jti', verifyToken, (req, res) => {
   });
 });
 
+
+// 404 handler - must be last
+app.use((req, res) => {
+  res.status(404).json({ error: 'Маршрут не найден' });
+});
 
 cleanupRevokedTokens();
 setInterval(cleanupRevokedTokens, 1000 * 60 * 60 * 12);

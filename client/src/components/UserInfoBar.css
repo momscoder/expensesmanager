@@ -19,6 +19,11 @@
   font-size: 0.9rem;
 }
 
+.logout-button-inline:hover {
+  background: none;
+  border: none;
+}
+
 .user-link {
   font-weight: 600;
 }

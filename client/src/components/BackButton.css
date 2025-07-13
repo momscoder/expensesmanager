@@ -1,22 +1,111 @@
 .back-button {
   position: fixed;
-  top: 16px;
-  left: 16px;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background-color: transparent;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  cursor: pointer;
-  z-index: 1000;
+  top: var(--spacing-md);
+  left: var(--spacing-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  width: 44px;
+  height: 44px;
+  background: rgba(44, 44, 44, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(68, 68, 68, 0.6);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 1000;
+  box-shadow: var(--shadow-md);
 }
 
 .back-button:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
-  transform: scale(1.08);
+  background: rgba(0, 122, 204, 0.9);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+
+.back-button:active {
+  transform: translateY(0);
+}
+
+.back-button:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.back-button svg {
+  width: 20px;
+  height: 20px;
+  transition: transform 0.3s ease;
+}
+
+.back-button:hover svg {
+  transform: translateX(-2px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .back-button {
+    top: var(--spacing-sm);
+    left: var(--spacing-sm);
+    width: 40px;
+    height: 40px;
+  }
+  
+  .back-button svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+@media (max-width: 640px) {
+  .back-button {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .back-button svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+  .back-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  
+  .back-button:hover {
+    transform: none;
+  }
+  
+  .back-button:hover svg {
+    transform: none;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .back-button {
+    background: rgba(44, 44, 44, 0.95);
+    border-width: 2px;
+  }
+  
+  .back-button:focus {
+    outline-width: 3px;
+  }
+}
+
+/* Light theme adjustments */
+@media (prefers-color-scheme: light) {
+  .back-button {
+    background: rgba(249, 249, 249, 0.8);
+    border-color: rgba(229, 229, 229, 0.6);
+  }
+  
+  .back-button:hover {
+    background: rgba(0, 122, 204, 0.9);
+  }
 }
