@@ -1,3 +1,5 @@
+import CryptoJS from 'crypto-js';
+
 class UtilityService {
   // Date formatting utilities
   static formatDate(date) {
@@ -264,6 +266,44 @@ class UtilityService {
     }
     
     return Math.abs(hash).toString(36);
+  }
+
+  // Генерация SHA-256 hash для чека (uid + date)
+  static async generateReceiptHashSHA256(uid, date) {
+    const str = `${uid}_${date}`;
+    // Web Crypto API (браузер/React Native >=0.59)
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(str);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    // Fallback: crypto-js (гарантированно установлен)
+    return CryptoJS.SHA256(str).toString(CryptoJS.enc.Hex);
+  }
+
+  // Декодирует JWT токен (без проверки подписи)
+  static jwtDecode(token) {
+    if (!token) return null;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      const payload = parts[1]
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
+      const decoded = decodeURIComponent(
+        atob(payload)
+          .split('')
+          .map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          })
+          .join('')
+      );
+      return JSON.parse(decoded);
+    } catch (e) {
+      console.error('Ошибка декодирования JWT:', e);
+      return null;
+    }
   }
 }
 

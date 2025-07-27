@@ -4,7 +4,7 @@ class ConfigService {
   constructor() {
     this.configKey = 'app_config';
     this.defaultConfig = {
-      apiBaseUrl: 'http://192.168.1.100:3000',
+      apiBaseUrl: 'http://192.168.1.249:3000',
       autoSync: true,
       theme: 'dark',
       language: 'ru',

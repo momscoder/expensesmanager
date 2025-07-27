@@ -167,12 +167,25 @@ db.serialize(() => {
   db.run(`
     CREATE TABLE IF NOT EXISTS receipts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uid TEXT,
       date TEXT NOT NULL,
-      product TEXT NOT NULL,
+      total_amount REAL NOT NULL,
+      hash TEXT UNIQUE,
+      user_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      receipt_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
       amount REAL NOT NULL,
       category TEXT,
-      user_id INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
     );
   `);
 
@@ -376,9 +389,37 @@ app.post('/api/data', async (req, res) => {
 
 // 📊 Получение всех записей
 app.get('/api/stats', (req, res) => {
-  db.all('SELECT * FROM receipts WHERE user_id = ? ORDER BY date ASC', [req.user.id], (err, rows) => {
+  db.all(`
+    SELECT 
+      r.id,
+      r.uid,
+      r.date,
+      r.total_amount,
+      r.hash,
+      r.created_at,
+      json_group_array(
+        json_object(
+          'id', p.id,
+          'name', p.name,
+          'amount', p.amount,
+          'category', p.category
+        )
+      ) as purchases
+    FROM receipts r
+    LEFT JOIN purchases p ON r.id = p.receipt_id
+    WHERE r.user_id = ?
+    GROUP BY r.id
+    ORDER BY r.date DESC
+  `, [req.user.id], (err, rows) => {
     if (err) return res.status(500).json({ error: 'Ошибка сервера' });
-    res.json(rows);
+    
+    // Parse purchases JSON for each receipt
+    const receipts = rows.map(row => ({
+      ...row,
+      purchases: JSON.parse(row.purchases).filter(p => p.id !== null) // Remove null entries
+    }));
+    
+    res.json(receipts);
   });
 });
 
@@ -421,8 +462,14 @@ app.post('/api/categories/rename', (req, res) => {
   db.run('UPDATE categories SET name = ? WHERE name = ? AND user_id = ?', [sanitizedNewName.trim(), sanitizedOldName.trim(), req.user.id], (err) => {
     if (err) return res.status(500).json({ error: 'Ошибка переименования' });
 
-    db.run('UPDATE receipts SET category = ? WHERE category = ? AND user_id = ?', [sanitizedNewName.trim(), sanitizedOldName.trim(), req.user.id], (err2) => {
-      if (err2) return res.status(500).json({ error: 'Ошибка обновления расходов' });
+    db.run(`
+      UPDATE purchases 
+      SET category = ? 
+      WHERE category = ? AND receipt_id IN (
+        SELECT id FROM receipts WHERE user_id = ?
+      )
+    `, [sanitizedNewName.trim(), sanitizedOldName.trim(), req.user.id], (err2) => {
+      if (err2) return res.status(500).json({ error: 'Ошибка обновления покупок' });
       res.json({ success: true });
     });
   });
@@ -444,7 +491,13 @@ app.delete('/api/categories/:id', (req, res) => {
     db.run('DELETE FROM categories WHERE id = ? AND user_id = ?', [sanitizedId, req.user.id], (err) => {
       if (err) return res.status(500).json({ error: 'Ошибка при удалении категории' });
 
-      db.run('UPDATE receipts SET category = NULL WHERE category = ? AND user_id = ?', [categoryName, req.user.id], (err2) => {
+      db.run(`
+        UPDATE purchases 
+        SET category = NULL 
+        WHERE category = ? AND receipt_id IN (
+          SELECT id FROM receipts WHERE user_id = ?
+        )
+      `, [categoryName, req.user.id], (err2) => {
         if (err2) return res.status(500).json({ error: 'Ошибка при очистке категории' });
         res.json({ message: 'Категория удалена и очищена' });
       });
@@ -452,7 +505,7 @@ app.delete('/api/categories/:id', (req, res) => {
   });
 });
 
-// ✍️ Обновление категории записи
+// ✍️ Обновление категории покупки
 app.post('/api/update-category/:id', (req, res) => {
   const { id } = req.params;
   const { category } = req.body;
@@ -462,58 +515,300 @@ app.post('/api/update-category/:id', (req, res) => {
   const sanitizedCategory = category ? sanitizeString(category) : null;
   
   if (sanitizedId <= 0) {
-    return res.status(400).json({ error: 'Неверный ID записи' });
+    return res.status(400).json({ error: 'Неверный ID покупки' });
   }
   
   if (sanitizedCategory && sanitizedCategory.length > 50) {
     return res.status(400).json({ error: 'Название категории не должно превышать 50 символов' });
   }
 
-  db.run('UPDATE receipts SET category = ? WHERE id = ? AND user_id = ?', [sanitizedCategory ? sanitizedCategory.trim() : null, sanitizedId, req.user.id], function (err) {
+  db.run(`
+    UPDATE purchases 
+    SET category = ? 
+    WHERE id = ? AND receipt_id IN (
+      SELECT id FROM receipts WHERE user_id = ?
+    )
+  `, [sanitizedCategory ? sanitizedCategory.trim() : null, sanitizedId, req.user.id], function (err) {
     if (err) return res.status(500).json({ error: 'Ошибка' });
-    if (this.changes === 0) return res.status(404).json({ error: 'Запись не найдена' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Покупка не найдена' });
     res.json({ message: 'Категория обновлена' });
+  });
+});
+
+// ✍️ Обновление названия покупки
+app.post('/api/update-purchase/:id', (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+
+  // Sanitize and validate inputs
+  const sanitizedId = sanitizeNumber(id);
+  const sanitizedName = sanitizeString(name);
+  
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID покупки' });
+  }
+  
+  if (!sanitizedName || !sanitizedName.trim() || sanitizedName.length > 200) {
+    return res.status(400).json({ error: 'Название покупки обязательно и не должно превышать 200 символов' });
+  }
+
+  db.run(`
+    UPDATE purchases 
+    SET name = ? 
+    WHERE id = ? AND receipt_id IN (
+      SELECT id FROM receipts WHERE user_id = ?
+    )
+  `, [sanitizedName.trim(), sanitizedId, req.user.id], function (err) {
+    if (err) return res.status(500).json({ error: 'Ошибка' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Покупка не найдена' });
+    res.json({ message: 'Название обновлено' });
+  });
+});
+
+// ✍️ Обновление цены покупки
+app.post('/api/update-purchase-price/:id', (req, res) => {
+  const { id } = req.params;
+  const { amount } = req.body;
+
+  // Sanitize and validate inputs
+  const sanitizedId = sanitizeNumber(id);
+  const sanitizedAmount = sanitizeFloat(amount);
+  
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID покупки' });
+  }
+  
+  if (sanitizedAmount <= 0 || sanitizedAmount > 999999.99) {
+    return res.status(400).json({ error: 'Сумма должна быть больше 0 и меньше 1,000,000' });
+  }
+
+  // First get the purchase to update receipt total
+  db.get(`
+    SELECT p.*, r.id as receipt_id
+    FROM purchases p
+    JOIN receipts r ON p.receipt_id = r.id
+    WHERE p.id = ? AND r.user_id = ?
+  `, [sanitizedId, req.user.id], (err, purchase) => {
+    if (err) return res.status(500).json({ error: 'Ошибка при получении покупки' });
+    if (!purchase) return res.status(404).json({ error: 'Покупка не найдена' });
+
+    // Update purchase amount
+    db.run(`
+      UPDATE purchases 
+      SET amount = ? 
+      WHERE id = ? AND receipt_id IN (
+        SELECT id FROM receipts WHERE user_id = ?
+      )
+    `, [sanitizedAmount, sanitizedId, req.user.id], function (err) {
+      if (err) return res.status(500).json({ error: 'Ошибка' });
+      if (this.changes === 0) return res.status(404).json({ error: 'Покупка не найдена' });
+      
+      // Update receipt total amount
+      db.run(`
+        UPDATE receipts 
+        SET total_amount = (
+          SELECT COALESCE(SUM(amount), 0) 
+          FROM purchases 
+          WHERE receipt_id = ?
+        )
+        WHERE id = ? AND user_id = ?
+      `, [purchase.receipt_id, purchase.receipt_id, req.user.id], (err) => {
+        if (err) console.error('Error updating receipt total:', err);
+        res.json({ message: 'Цена обновлена' });
+      });
+    });
+  });
+});
+
+// ✍️ Обновление даты чека
+app.post('/api/update-receipt-date/:id', (req, res) => {
+  const { id } = req.params;
+  const { date } = req.body;
+
+  // Sanitize and validate inputs
+  const sanitizedId = sanitizeNumber(id);
+  const sanitizedDate = sanitizeString(date);
+  
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID чека' });
+  }
+  
+  if (!validateDate(sanitizedDate)) {
+    return res.status(400).json({ error: 'Неверный формат даты (YYYY-MM-DD)' });
+  }
+
+  db.run(`
+    UPDATE receipts 
+    SET date = ? 
+    WHERE id = ? AND user_id = ?
+  `, [sanitizedDate, sanitizedId, req.user.id], function (err) {
+    if (err) return res.status(500).json({ error: 'Ошибка' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Чек не найден' });
+    res.json({ message: 'Дата обновлена' });
+  });
+});
+
+// ✍️ Обновление названия чека (UID)
+app.post('/api/update-receipt-name/:id', (req, res) => {
+  const { id } = req.params;
+  const { uid } = req.body;
+
+  // Sanitize and validate inputs
+  const sanitizedId = sanitizeNumber(id);
+  const sanitizedUid = uid ? sanitizeString(uid) : null;
+  
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID чека' });
+  }
+  
+  if (sanitizedUid && sanitizedUid.length > 100) {
+    return res.status(400).json({ error: 'Название чека не должно превышать 100 символов' });
+  }
+
+  db.run(`
+    UPDATE receipts 
+    SET uid = ? 
+    WHERE id = ? AND user_id = ?
+  `, [sanitizedUid ? sanitizedUid.trim() : null, sanitizedId, req.user.id], function (err) {
+    if (err) return res.status(500).json({ error: 'Ошибка' });
+    if (this.changes === 0) return res.status(404).json({ error: 'Чек не найден' });
+    res.json({ message: 'Название чека обновлено' });
+  });
+});
+
+// 🗑️ Удаление покупки
+app.delete('/api/purchases/:id', (req, res) => {
+  const { id } = req.params;
+  
+  // Sanitize and validate purchase ID
+  const sanitizedId = sanitizeNumber(id);
+  if (sanitizedId <= 0) {
+    return res.status(400).json({ error: 'Неверный ID покупки' });
+  }
+  
+  // First get the purchase to check if it's the last one in the receipt
+  db.get(`
+    SELECT p.*, r.id as receipt_id, 
+           (SELECT COUNT(*) FROM purchases WHERE receipt_id = r.id) as purchase_count
+    FROM purchases p
+    JOIN receipts r ON p.receipt_id = r.id
+    WHERE p.id = ? AND r.user_id = ?
+  `, [sanitizedId, req.user.id], (err, purchase) => {
+    if (err) return res.status(500).json({ error: 'Ошибка при получении покупки' });
+    if (!purchase) return res.status(404).json({ error: 'Покупка не найдена' });
+    
+    // If this is the last purchase in the receipt, delete the entire receipt
+    if (purchase.purchase_count <= 1) {
+      db.run('DELETE FROM receipts WHERE id = ? AND user_id = ?', [purchase.receipt_id, req.user.id], function (err) {
+        if (err) return res.status(500).json({ error: 'Ошибка при удалении чека' });
+        res.json({ message: 'Чек удален (последняя покупка)', deletedReceipt: true });
+      });
+    } else {
+      // Delete only the purchase
+      db.run(`
+        DELETE FROM purchases 
+        WHERE id = ? AND receipt_id IN (
+          SELECT id FROM receipts WHERE user_id = ?
+        )
+      `, [sanitizedId, req.user.id], function (err) {
+        if (err) return res.status(500).json({ error: 'Ошибка при удалении покупки' });
+        if (this.changes === 0) return res.status(404).json({ error: 'Покупка не найдена' });
+        
+        // Update receipt total amount
+        db.run(`
+          UPDATE receipts 
+          SET total_amount = (
+            SELECT COALESCE(SUM(amount), 0) 
+            FROM purchases 
+            WHERE receipt_id = ?
+          )
+          WHERE id = ? AND user_id = ?
+        `, [purchase.receipt_id, purchase.receipt_id, req.user.id], (err) => {
+          if (err) console.error('Error updating receipt total:', err);
+          res.json({ message: 'Покупка удалена', deletedReceipt: false });
+        });
+      });
+    }
   });
 });
 
 // ➕ Добавление расхода вручную
 app.post('/api/receipts', (req, res) => {
-  const { date, product, amount, category } = req.body;
+  const { uid, date, purchases, total_amount } = req.body;
   
   // Sanitize and validate inputs
+  const sanitizedUid = uid ? sanitizeString(uid) : null;
   const sanitizedDate = sanitizeString(date);
-  const sanitizedProduct = sanitizeString(product);
-  const sanitizedAmount = sanitizeFloat(amount);
-  const sanitizedCategory = category ? sanitizeString(category) : null;
+  const sanitizedTotalAmount = sanitizeFloat(total_amount);
   
   // Validate required fields
   if (!validateDate(sanitizedDate)) {
     return res.status(400).json({ error: 'Неверный формат даты (YYYY-MM-DD)' });
   }
   
-  if (!sanitizedProduct || !sanitizedProduct.trim() || sanitizedProduct.length > 200) {
-    return res.status(400).json({ error: 'Название продукта обязательно и не должно превышать 200 символов' });
+  if (!Array.isArray(purchases) || purchases.length === 0) {
+    return res.status(400).json({ error: 'Список покупок обязателен и не должен быть пустым' });
   }
   
-  if (sanitizedAmount <= 0 || sanitizedAmount > 999999.99) {
+  if (sanitizedTotalAmount <= 0 || sanitizedTotalAmount > 999999.99) {
     return res.status(400).json({ error: 'Сумма должна быть больше 0 и меньше 1,000,000' });
   }
-  
-  if (sanitizedCategory && sanitizedCategory.length > 50) {
-    return res.status(400).json({ error: 'Название категории не должно превышать 50 символов' });
+
+  // Validate each purchase
+  for (const purchase of purchases) {
+    const { name, amount, category } = purchase;
+    const sanitizedName = sanitizeString(name);
+    const sanitizedAmount = sanitizeFloat(amount);
+    const sanitizedCategory = category ? sanitizeString(category) : null;
+    
+    if (!sanitizedName || !sanitizedName.trim() || sanitizedName.length > 200) {
+      return res.status(400).json({ error: 'Название продукта обязательно и не должно превышать 200 символов' });
+    }
+    
+    if (sanitizedAmount <= 0 || sanitizedAmount > 999999.99) {
+      return res.status(400).json({ error: 'Сумма покупки должна быть больше 0 и меньше 1,000,000' });
+    }
+    
+    if (sanitizedCategory && sanitizedCategory.length > 50) {
+      return res.status(400).json({ error: 'Название категории не должно превышать 50 символов' });
+    }
   }
 
+  // Generate hash for the receipt
+  const receiptHash = crypto.createHash('sha256')
+    .update(`${sanitizedUid || ''}${sanitizedDate}${sanitizedTotalAmount}${req.user.id}`)
+    .digest('hex');
+
   db.run(
-    'INSERT INTO receipts (date, product, amount, category, user_id) VALUES (?, ?, ?, ?, ?)',
-    [sanitizedDate, sanitizedProduct.trim(), sanitizedAmount, sanitizedCategory ? sanitizedCategory.trim() : null, req.user.id],
+    'INSERT INTO receipts (uid, date, total_amount, hash, user_id) VALUES (?, ?, ?, ?, ?)',
+    [sanitizedUid, sanitizedDate, sanitizedTotalAmount, receiptHash, req.user.id],
     function (err) {
       if (err) return res.status(500).json({ error: 'Ошибка сервера' });
-      res.status(201).json({ 
-        id: this.lastID, 
-        date: sanitizedDate, 
-        product: sanitizedProduct.trim(), 
-        amount: sanitizedAmount, 
-        category: sanitizedCategory ? sanitizedCategory.trim() : null 
+      
+      const receiptId = this.lastID;
+      
+      // Insert purchases
+      const purchaseStmt = db.prepare('INSERT INTO purchases (receipt_id, name, amount, category) VALUES (?, ?, ?, ?)');
+      
+      purchases.forEach(purchase => {
+        const { name, amount, category } = purchase;
+        const sanitizedName = sanitizeString(name);
+        const sanitizedAmount = sanitizeFloat(amount);
+        const sanitizedCategory = category ? sanitizeString(category) : null;
+        
+        purchaseStmt.run([receiptId, sanitizedName.trim(), sanitizedAmount, sanitizedCategory ? sanitizedCategory.trim() : null]);
+      });
+      
+      purchaseStmt.finalize((err) => {
+        if (err) return res.status(500).json({ error: 'Ошибка сохранения покупок' });
+        
+        res.status(201).json({ 
+          id: receiptId,
+          uid: sanitizedUid,
+          date: sanitizedDate,
+          total_amount: sanitizedTotalAmount,
+          purchases: purchases
+        });
       });
     }
   );
@@ -551,10 +846,11 @@ app.get('/api/expenses-by-category-range', (req, res) => {
   }
 
   db.all(
-    `SELECT COALESCE(category, 'Без категории') AS category, SUM(amount) AS total
-     FROM receipts
-     WHERE date BETWEEN ? AND ? AND user_id = ?
-     GROUP BY category
+    `SELECT COALESCE(p.category, 'Без категории') AS category, SUM(p.amount) AS total
+     FROM receipts r
+     JOIN purchases p ON r.id = p.receipt_id
+     WHERE r.date BETWEEN ? AND ? AND r.user_id = ?
+     GROUP BY p.category
      ORDER BY total DESC`,
     [start, end, req.user.id],
     (err, rows) => {
@@ -578,11 +874,12 @@ app.get('/api/total-expenses-range', (req, res) => {
   }
 
   db.all(
-    `SELECT date, SUM(amount) AS total
-     FROM receipts
-     WHERE date BETWEEN ? AND ? AND user_id = ?
-     GROUP BY date
-     ORDER BY date ASC`,
+    `SELECT r.date, SUM(p.amount) AS total
+     FROM receipts r
+     JOIN purchases p ON r.id = p.receipt_id
+     WHERE r.date BETWEEN ? AND ? AND r.user_id = ?
+     GROUP BY r.date
+     ORDER BY r.date ASC`,
     [start, end, req.user.id],
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'Ошибка сервера' });
@@ -773,6 +1070,158 @@ app.delete('/api/sessions/:jti', verifyToken, (req, res) => {
   });
 });
 
+// 📥 Получение всех данных пользователя для синхронизации
+app.get('/api/pull', async (req, res) => {
+  try {
+    // Получить все чеки пользователя
+    const receipts = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM receipts WHERE user_id = ?', [req.user.id], (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+
+    // Получить все покупки пользователя
+    const purchases = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM purchases WHERE receipt_id IN (SELECT id FROM receipts WHERE user_id = ?)', [req.user.id], (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+
+    // Получить все категории пользователя
+    const categories = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM categories WHERE user_id = ?', [req.user.id], (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+
+    res.json({ receipts, purchases, categories });
+  } catch (error) {
+    console.error('Ошибка при pull:', error);
+    res.status(500).json({ error: 'Ошибка сервера при pull' });
+  }
+});
+
+// 🔄 Новый endpoint синхронизации
+app.post('/api/sync', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { receipts = [], purchases = [], categories = [] } = req.body;
+    const results = { receipts: [], purchases: [], categories: [] };
+    const hashToServerId = {};
+    const localIdToServerId = {};
+
+    // 1. Синхронизация чеков
+    for (const r of receipts) {
+      let serverReceipt = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM receipts WHERE hash = ? AND user_id = ?', [r.hash, userId], (err, row) => {
+          if (err) return reject(err);
+          resolve(row);
+        });
+      });
+      let receiptId;
+      if (serverReceipt) {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `UPDATE receipts SET uid = ?, date = ?, total_amount = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+            [r.uid, r.date, r.total_amount, r.updated_at, serverReceipt.id, userId],
+            function (err) {
+              if (err) return reject(err);
+              results.receipts.push({ id: serverReceipt.id, status: 'updated', hash: r.hash, localId: r.localId });
+              hashToServerId[r.hash] = serverReceipt.id;
+              if (r.localId) localIdToServerId[r.localId] = serverReceipt.id;
+              resolve();
+            }
+          );
+        });
+        receiptId = serverReceipt.id;
+      } else {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `INSERT INTO receipts (uid, date, total_amount, hash, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [r.uid, r.date, r.total_amount, r.hash, r.created_at, r.updated_at, userId],
+            function (err) {
+              if (err) return reject(err);
+              results.receipts.push({ id: this.lastID, status: 'created', hash: r.hash, localId: r.localId });
+              hashToServerId[r.hash] = this.lastID;
+              if (r.localId) localIdToServerId[r.localId] = this.lastID;
+              receiptId = this.lastID;
+              resolve();
+            }
+          );
+        });
+      }
+      // После обновления/вставки чека — удаляем все покупки этого чека
+      await new Promise((resolve, reject) => {
+        db.run('DELETE FROM purchases WHERE receipt_id = ?', [receiptId], function (err) {
+          if (err) return reject(err);
+          resolve();
+        });
+      });
+      // Вставляем все покупки из payload для этого чека
+      // ВАЖНО: ищем покупки по локальному id (r.id) и по серверному (receiptId) и по localIdToServerId[r.id]
+      const purchasesForReceipt = purchases.filter(
+        p => p.receipt_id === r.id || p.receipt_id === receiptId || p.receipt_id === localIdToServerId[r.id]
+      );
+      for (const p of purchasesForReceipt) {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `INSERT INTO purchases (name, amount, category, receipt_id) VALUES (?, ?, ?, ?)`,
+            [p.name, p.amount, p.category, receiptId],
+            function (err) {
+              if (err) return reject(err);
+              results.purchases.push({ id: this.lastID, status: 'created', localId: p.localId });
+              resolve();
+            }
+          );
+        });
+      }
+    }
+
+    // 2. Синхронизация категорий (по name + user_id)
+    for (const c of categories) {
+      const serverCategory = await new Promise((resolve, reject) => {
+        db.get('SELECT * FROM categories WHERE name = ? AND user_id = ?', [c.name, userId], (err, row) => {
+          if (err) return reject(err);
+          resolve(row);
+        });
+      });
+      if (serverCategory) {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `UPDATE categories SET name = ? WHERE id = ? AND user_id = ?`,
+            [c.name, serverCategory.id, userId],
+            function (err) {
+              if (err) return reject(err);
+              results.categories.push({ id: serverCategory.id, status: 'updated', localId: c.localId });
+              resolve();
+            }
+          );
+        });
+      } else {
+        await new Promise((resolve, reject) => {
+          db.run(
+            `INSERT INTO categories (name, user_id) VALUES (?, ?)`,
+            [c.name, userId],
+            function (err) {
+              if (err) return reject(err);
+              results.categories.push({ id: this.lastID, status: 'created', localId: c.localId });
+              resolve();
+            }
+          );
+        });
+      }
+    }
+
+    res.json({ success: true, results, localIdToServerId, hashToServerId });
+    console.log('sync', results);
+  } catch (error) {
+    console.error('Ошибка при sync:', error);
+    res.status(500).json({ error: 'Ошибка сервера при sync' });
+  }
+});
 
 // 404 handler - must be last
 app.use((req, res) => {
@@ -782,6 +1231,6 @@ app.use((req, res) => {
 cleanupRevokedTokens();
 setInterval(cleanupRevokedTokens, 1000 * 60 * 60 * 12);
 
-app.listen(port, () => {
-  console.log(`🚀 Сервер работает на http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Сервер работает на http://0.0.0.0:${port}`);
 });

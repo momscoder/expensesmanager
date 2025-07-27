@@ -496,6 +496,14 @@ export default function HomeScreen({ onGoToAuth }) {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* FAB для ручного чека */}
+      <FAB
+        style={styles.fab}
+        icon="plus"
+        onPress={handleAddManualReceipt}
+        color="#fff"
+      />
+
       {/* Manual Receipt Dialog */}
       <Portal>
         <Dialog

@@ -21,8 +21,9 @@ import * as SecureStore from 'expo-secure-store';
 import ApiService from '../services/ApiService';
 import SyncService from '../services/SyncService';
 import UtilityService from '../services/UtilityService';
+import DatabaseService from '../services/DatabaseService';
 
-export default function ProfileScreen() {
+export default function ProfileScreen({ onLogout }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
@@ -39,9 +40,8 @@ export default function ProfileScreen() {
     try {
       const token = await SecureStore.getItemAsync('authToken');
       if (token) {
-        // In a real app, you would decode the JWT token to get user info
-        // For now, we'll use a placeholder
-        setUser({ username: 'Пользователь' });
+        const decoded = UtilityService.jwtDecode(token);
+        setUser({username: decoded?.email});
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -69,7 +69,7 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               await ApiService.logout();
-              // The App component will handle the navigation
+              if (onLogout) onLogout();
             } catch (error) {
               console.error('Logout error:', error);
             }
@@ -105,7 +105,8 @@ export default function ProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Clear all local data
+              // Clear all local data (база данных и токен)
+              await DatabaseService.clearAllData();
               await SecureStore.deleteItemAsync('authToken');
               setSnackbarMessage('Данные очищены');
             } catch (error) {
@@ -118,18 +119,6 @@ export default function ProfileScreen() {
         },
       ]
     );
-  };
-
-  const handleExportData = async () => {
-    try {
-      // In a real app, you would implement data export functionality
-      setSnackbarMessage('Экспорт данных (функция в разработке)');
-      setSnackbarVisible(true);
-    } catch (error) {
-      console.error('Error exporting data:', error);
-      setSnackbarMessage('Ошибка экспорта данных: ' + UtilityService.getErrorMessage(error));
-      setSnackbarVisible(true);
-    }
   };
 
   return (
@@ -152,6 +141,7 @@ export default function ProfileScreen() {
         </Card>
 
         {/* Sync Status */}
+{/*
         <Card style={styles.card}>
           <Card.Content>
             <Title style={styles.cardTitle}>Статус синхронизации</Title>
@@ -193,11 +183,11 @@ export default function ProfileScreen() {
             </Button>
           </Card.Content>
         </Card>
-
+*/}
         {/* Settings */}
         <Card style={styles.card}>
           <Card.Content>
-            <Title style={styles.cardTitle}>Настройки</Title>
+            {/*<Title style={styles.cardTitle}>Настройки</Title>
             
             <View style={styles.settingRow}>
               <View style={styles.settingInfo}>
@@ -214,16 +204,7 @@ export default function ProfileScreen() {
             </View>
 
             <Divider style={styles.divider} />
-
-            <Button
-              mode="outlined"
-              onPress={handleExportData}
-              style={styles.settingButton}
-              icon="download"
-            >
-              Экспорт данных
-            </Button>
-
+*/}
             <Button
               mode="outlined"
               onPress={handleClearData}

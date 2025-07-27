@@ -21,6 +21,7 @@ import DatabaseService from './src/services/DatabaseService';
 import SimpleDataService from './src/services/SimpleDataService';
 import SyncService from './src/services/SyncService';
 import ErrorBoundary from './src/components/ErrorBoundary';
+import ApiService from './src/services/ApiService';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -113,11 +114,26 @@ export default function App() {
     return () => subscription?.remove();
   }, []);
 
+  useEffect(() => {
+    // Подписка на глобальный logout
+    ApiService.setLogoutHandler(handleLogout);
+  }, []);
+
   const initializeServices = async () => {
     try {
+      console.log('Initializing SimpleDataService...');
       await SimpleDataService.initialize();
+      console.log('SimpleDataService initialized successfully');
     } catch (error) {
-      console.error('Error initializing services:', error);
+      console.error('Error initializing SimpleDataService:', error);
+    }
+    
+    try {
+      console.log('Initializing DatabaseService...');
+      await DatabaseService.initialize();
+      console.log('DatabaseService initialized successfully');
+    } catch (error) {
+      console.error('Error initializing DatabaseService:', error);
     }
   };
 
@@ -155,9 +171,20 @@ export default function App() {
     setAppState(nextAppState);
   };
 
-  const handleAuthSuccess = () => {
+  const handleAuthSuccess = async () => {
     setIsAuthenticated(true);
     setIsGuestMode(false);
+    try {
+      // Сначала подтянуть данные с сервера
+      await SyncService.pullFromServer();
+      // Затем отправить локальные несинхронизированные данные на сервер
+      await SyncService.syncToServer();
+      console.log('Синхронизация после аутентификации завершена');
+    } catch (error) {
+      console.error('Ошибка синхронизации после аутентификации:', error);
+      // Можно добавить Alert или Snackbar для пользователя
+      // Alert.alert('Ошибка синхронизации', error.message || 'Не удалось синхронизировать данные');
+    }
   };
 
   const handleGuestMode = async () => {
@@ -166,6 +193,7 @@ export default function App() {
     setIsAuthenticated(false);
   };
 
+  // Функция выхода из аккаунта
   const handleLogout = async () => {
     try {
       await SecureStore.deleteItemAsync('authToken');
@@ -218,6 +246,9 @@ export default function App() {
                 )}
               </Stack.Screen>
             )}
+            <Stack.Screen name="Profile">
+              {props => <ProfileScreen {...props} onLogout={handleLogout} />}
+            </Stack.Screen>
           </Stack.Navigator>
         </NavigationContainer>
       </PaperProvider>

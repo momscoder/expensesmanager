@@ -51,6 +51,10 @@ class DataChangeService {
     this.notifyDataChange('receipt_deleted', { receiptId });
   }
 
+  notifyPurchaseUpdated(purchase = null) {
+    this.notifyDataChange('purchase_updated', { purchase });
+  }
+
   notifyCategoryChanged(category = null) {
     this.notifyDataChange('category_changed', { category });
   }

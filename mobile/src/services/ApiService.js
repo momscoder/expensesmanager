@@ -5,6 +5,13 @@ class ApiService {
   constructor() {
     this.baseURL = null;
     this.isInitialized = false;
+    // Глобальный обработчик выхода
+    this.onLogout = null;
+  }
+
+  // Позволяет подписаться на logout
+  setLogoutHandler(handler) {
+    this.onLogout = handler;
   }
 
   async ensureInitialized() {
@@ -52,22 +59,40 @@ class ApiService {
       ...options,
     };
 
+    // Логируем параметры запроса
+    console.log('[API REQUEST]', endpoint, config);
+
     try {
       const response = await fetch(`${this.baseURL}${endpoint}`, config);
-      
-      if (response.status === 401) {
+      // Логируем статус ответа
+      console.log('[API RESPONSE]', endpoint, 'Status:', response.status, response.statusText);
+      let responseBody = null;
+      try {
+        responseBody = await response.clone().json();
+      } catch (e) {
+        try {
+          responseBody = await response.clone().text();
+        } catch (e2) {
+          responseBody = '[Не удалось прочитать тело ответа]';
+        }
+      }
+      console.log('[API RESPONSE BODY]', endpoint, responseBody);
+
+      if (response.status === 401 || response.status === 403) {
         await this.removeToken();
-        throw new Error('Authentication failed');
+        if (this.onLogout) {
+          this.onLogout();
+        }
       }
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        const errorData = responseBody || {};
         throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       return response;
     } catch (error) {
-      console.error('API request failed:', error);
+      console.error('[API ERROR]', endpoint, error);
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
         throw new Error('Network error: Unable to connect to server');
       }
@@ -100,6 +125,9 @@ class ApiService {
 
   async logout() {
     await this.removeToken();
+    if (this.onLogout) {
+      this.onLogout();
+    }
   }
 
   // Receipt operations

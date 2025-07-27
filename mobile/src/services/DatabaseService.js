@@ -6,18 +6,39 @@ class DatabaseService {
   constructor() {
     this.db = null;
     this.isInitialized = false;
+    this.initPromise = null;
+    this.initError = null;
   }
 
   async initialize() {
     if (this.isInitialized) return;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = (async () => {
+      try {
+        console.log('[DB] Открытие базы данных...');
+        this.db = await SQLite.openDatabaseAsync('receipts.db', { useNewConnection: true });
+        console.log('[DB] Создание таблиц...');
+        await this.createTables();
+        this.isInitialized = true;
+        this.initError = null;
+        console.log('[DB] База данных инициализирована');
+      } catch (error) {
+        this.initError = error;
+        console.error('[DB] Ошибка инициализации базы данных:', error);
+        throw new Error('Ошибка инициализации базы данных: ' + (error?.message || error));
+      } finally {
+        this.initPromise = null;
+      }
+    })();
+    return this.initPromise;
+  }
 
-    try {
-      this.db = await SQLite.openDatabaseAsync('receipts.db');
-      await this.createTables();
-      this.isInitialized = true;
-    } catch (error) {
-      console.error('Error initializing database:', error);
-      throw new Error('Ошибка инициализации базы данных');
+  checkInitialized() {
+    if (this.initError) {
+      throw new Error('База данных не инициализирована: ' + (this.initError?.message || this.initError));
+    }
+    if (!this.isInitialized) {
+      throw new Error('База данных не инициализирована');
     }
   }
 
@@ -78,6 +99,7 @@ class DatabaseService {
 
   async getAllReceipts() {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipts = await this.db.getAllAsync(`
@@ -101,12 +123,44 @@ class DatabaseService {
     }
   }
 
-  async addReceipt(receiptData) {
+  async checkReceiptExists(uid, date) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
+      const hash = await UtilityService.generateReceiptHashSHA256(uid, date);
+      const existingReceipt = await this.db.getFirstAsync(
+        'SELECT * FROM receipts WHERE hash = ?',
+        [hash]
+      );
+      return !!existingReceipt;
+    } catch (error) {
+      console.error('Error checking receipt existence:', error);
+      return false;
+    }
+  }
+
+  async markReceiptAsUsed(uid, date) {
+    try {
+      // This method is used to track processed receipts
+      // In the new structure, we use the hash for duplicate detection
+      // So this method is mainly for compatibility
+      console.log('Receipt marked as used:', uid, date);
+    } catch (error) {
+      console.error('Error marking receipt as used:', error);
+    }
+  }
+
+  async addReceipt(receiptData) {
+    await this.initialize();
+    this.checkInitialized();
+    
+    try {
+      console.log('DatabaseService: Starting to add receipt:', receiptData);
+      
       // Generate hash for duplicate detection
-      const hash = this.generateReceiptHash(receiptData);
+      const hash = await UtilityService.generateReceiptHashSHA256(receiptData.uid, receiptData.date);
+      console.log('DatabaseService: Generated hash:', hash);
       
       // Check for duplicates
       const existingReceipt = await this.db.getFirstAsync(
@@ -115,8 +169,11 @@ class DatabaseService {
       );
       
       if (existingReceipt) {
+        console.log('DatabaseService: Receipt already exists with hash:', hash);
         throw new Error('Этот чек уже существует');
       }
+
+      console.log('DatabaseService: No duplicate found, inserting receipt...');
 
       // Insert receipt
       const result = await this.db.runAsync(`
@@ -132,9 +189,11 @@ class DatabaseService {
       ]);
 
       const receiptId = result.lastInsertRowId;
+      console.log('DatabaseService: Receipt inserted with ID:', receiptId);
 
       // Insert purchases
       if (receiptData.purchases && Array.isArray(receiptData.purchases)) {
+        console.log('DatabaseService: Inserting purchases:', receiptData.purchases.length);
         for (const purchase of receiptData.purchases) {
           await this.db.runAsync(`
             INSERT INTO purchases (receipt_id, name, category, amount)
@@ -146,21 +205,24 @@ class DatabaseService {
             purchase.amount
           ]);
         }
+        console.log('DatabaseService: All purchases inserted successfully');
       }
 
       // Get the complete receipt with purchases
       const newReceipt = await this.getReceiptById(receiptId);
+      console.log('DatabaseService: Complete receipt retrieved:', newReceipt);
       
       dataChangeService.notifyReceiptAdded(newReceipt);
       return newReceipt;
     } catch (error) {
-      console.error('Error adding receipt:', error);
+      console.error('DatabaseService: Error adding receipt:', error);
       throw error;
     }
   }
 
   async getReceiptById(id) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipt = await this.db.getFirstAsync(
@@ -186,6 +248,7 @@ class DatabaseService {
 
   async updateReceipt(id, updates) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipt = await this.getReceiptById(id);
@@ -247,6 +310,7 @@ class DatabaseService {
 
   async deleteReceipt(id) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const result = await this.db.runAsync('DELETE FROM receipts WHERE id = ?', [id]);
@@ -263,10 +327,39 @@ class DatabaseService {
     }
   }
 
+  async updatePurchaseCategory(purchaseId, newCategory) {
+    await this.initialize();
+    this.checkInitialized();
+    
+    try {
+      const result = await this.db.runAsync(
+        'UPDATE purchases SET category = ? WHERE id = ?',
+        [newCategory, purchaseId]
+      );
+      
+      if (result.changes === 0) {
+        throw new Error('Покупка не найдена');
+      }
+
+      // Get the updated purchase
+      const purchase = await this.db.getFirstAsync(
+        'SELECT * FROM purchases WHERE id = ?',
+        [purchaseId]
+      );
+
+      dataChangeService.notifyPurchaseUpdated(purchase);
+      return purchase;
+    } catch (error) {
+      console.error('Error updating purchase category:', error);
+      throw error;
+    }
+  }
+
   // ===== CATEGORIES MANAGEMENT =====
 
   async getCategories() {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const categories = await this.db.getAllAsync('SELECT name FROM categories ORDER BY name');
@@ -282,6 +375,7 @@ class DatabaseService {
 
   async addCategory(categoryName) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       await this.db.runAsync('INSERT INTO categories (name) VALUES (?)', [categoryName]);
@@ -298,6 +392,7 @@ class DatabaseService {
 
   async updateCategory(oldName, newName) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       // Update category name
@@ -326,6 +421,7 @@ class DatabaseService {
 
   async deleteCategory(categoryName) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const result = await this.db.runAsync(
@@ -355,6 +451,7 @@ class DatabaseService {
 
   async getReceiptsByDateRange(startDate, endDate) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipts = await this.db.getAllAsync(`
@@ -382,6 +479,7 @@ class DatabaseService {
 
   async getPurchasesByDateRange(startDate, endDate) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const purchases = await this.db.getAllAsync(`
@@ -400,6 +498,7 @@ class DatabaseService {
 
   async getStats(startDate, endDate) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipts = await this.getReceiptsByDateRange(startDate, endDate);
@@ -433,6 +532,7 @@ class DatabaseService {
 
   async getExpensesByCategory(startDate, endDate) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const purchases = await this.getPurchasesByDateRange(startDate, endDate);
@@ -461,6 +561,7 @@ class DatabaseService {
 
   async getTotalExpensesRange(startDate, endDate) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       const receipts = await this.getReceiptsByDateRange(startDate, endDate);
@@ -488,28 +589,19 @@ class DatabaseService {
 
   // ===== UTILITY METHODS =====
 
-  generateReceiptHash(receiptData) {
-    const data = {
-      date: receiptData.date,
-      total_amount: receiptData.total_amount,
-      purchases_count: receiptData.purchases?.length || 0
-    };
-    return UtilityService.generateHash(JSON.stringify(data));
-  }
+  // Удалить старую функцию generateReceiptHash
 
   async clearAllData() {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       await this.db.execAsync(`
-        DELETE FROM purchases;
-        DELETE FROM receipts;
-        DELETE FROM categories;
+        DROP TABLE IF EXISTS purchases;
+        DROP TABLE IF EXISTS receipts;
+        DROP TABLE IF EXISTS categories;
       `);
-      
-      // Reinitialize default categories
       await this.createTables();
-      
       dataChangeService.notifyDataChange('data_cleared');
     } catch (error) {
       console.error('Error clearing data:', error);
@@ -529,16 +621,14 @@ class DatabaseService {
 
   async getUnsyncedRecords() {
     await this.initialize();
-    
+    this.checkInitialized();
     try {
-      const receipts = await this.db.getAllAsync(`
-        SELECT * FROM receipts 
-        WHERE uid IS NOT NULL 
-        ORDER BY created_at DESC
-      `);
-
+      // Получаем все чеки
+      const receipts = await this.db.getAllAsync(`SELECT * FROM receipts ORDER BY created_at DESC`);
+      // Считаем несинхронизированными только те, у которых id < 0 (или другой признак локальности)
+      const unsyncedReceipts = receipts.filter(r => r.id < 0);
       const receiptsWithPurchases = await Promise.all(
-        receipts.map(async (receipt) => {
+        unsyncedReceipts.map(async (receipt) => {
           const purchases = await this.db.getAllAsync(
             'SELECT * FROM purchases WHERE receipt_id = ?',
             [receipt.id]
@@ -546,7 +636,6 @@ class DatabaseService {
           return { ...receipt, purchases };
         })
       );
-
       return receiptsWithPurchases;
     } catch (error) {
       console.error('Error getting unsynced records:', error);
@@ -556,6 +645,7 @@ class DatabaseService {
 
   async markAsSynced(receiptId) {
     await this.initialize();
+    this.checkInitialized();
     
     try {
       await this.db.runAsync(`
@@ -566,9 +656,114 @@ class DatabaseService {
       throw new Error('Ошибка отметки чека как синхронизированного');
     }
   }
+
+  // Заглушка для совместимости с SyncService
+  async clearSyncLog() {
+    // Можно реализовать очистку sync-лога, если он есть
+    console.log('[DB] clearSyncLog called (noop)');
+  }
+
+  // Импорт данных с сервера (полная синхронизация)
+  async importFromServerData(serverData) {
+    await this.initialize();
+    this.checkInitialized();
+    try {
+      console.log('[DB] Очищаю локальные таблицы перед импортом данных с сервера...');
+      // Очищаем все таблицы
+      await this.db.execAsync(`DELETE FROM purchases; DELETE FROM receipts; DELETE FROM categories;`);
+
+      // Импортируем категории
+      if (Array.isArray(serverData.categories)) {
+        for (const cat of serverData.categories) {
+          if (cat && cat.name) {
+            await this.db.runAsync('INSERT OR IGNORE INTO categories (name) VALUES (?)', [cat.name]);
+          }
+        }
+        console.log(`[DB] Импортировано категорий: ${serverData.categories.length}`);
+      }
+
+      // Импортируем чеки
+      if (Array.isArray(serverData.receipts)) {
+        for (const r of serverData.receipts) {
+          const now = new Date().toISOString();
+          await this.db.runAsync(
+            `INSERT INTO receipts (id, uid, date, hash, total_amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              r.id,
+              r.uid,
+              r.date,
+              r.hash,
+              r.total_amount,
+              r.created_at || now,
+              r.updated_at || now
+            ]
+          );
+        }
+        console.log(`[DB] Импортировано чеков: ${serverData.receipts.length}`);
+      }
+
+      // Импортируем покупки
+      if (Array.isArray(serverData.purchases)) {
+        for (const p of serverData.purchases) {
+          let category = p.category;
+          if (category && typeof category === 'object' && category.name) {
+            category = category.name;
+          }
+          await this.db.runAsync(
+            `INSERT INTO purchases (id, receipt_id, name, category, amount) VALUES (?, ?, ?, ?, ?)`,
+            [p.id, p.receipt_id, p.name, category, p.amount]
+          );
+        }
+        console.log(`[DB] Импортировано покупок: ${serverData.purchases.length}`);
+      }
+      console.log('[DB] Импорт данных с сервера завершён');
+      // Логируем все receipts и purchases после импорта
+      const allReceipts = await this.getAllReceipts();
+      console.log('[DB] Все чеки после импорта:', JSON.stringify(allReceipts, null, 2));
+      const allPurchases = await this.db.getAllAsync('SELECT * FROM purchases');
+      console.log('[DB] Все покупки после импорта:', JSON.stringify(allPurchases, null, 2));
+    } catch (error) {
+      console.error('[DB] Ошибка при импорте данных с сервера:', error);
+      throw new Error('Ошибка при импорте данных с сервера: ' + (error?.message || error));
+    }
+  }
+
+  // Обновить receipt_id у покупок по localId после sync
+  async updateLocalIdsAfterSync(localIdToServerId, hashToServerId) {
+    await this.initialize();
+    this.checkInitialized();
+  
+    try {
+      // Обновляем receipt_id у покупок по localIdToServerId
+      if (localIdToServerId && typeof localIdToServerId === 'object') {
+        for (const [localId, serverId] of Object.entries(localIdToServerId)) {
+          // Обновляем все покупки, у которых receipt_id = localId
+          await this.db.runAsync(
+            'UPDATE purchases SET receipt_id = ? WHERE receipt_id = ?',
+            [serverId, localId]
+          );
+        }
+      }
+      // hashToServerId можно использовать для обновления receipt_id у чеков, если нужно
+      // Но для purchases используем только localIdToServerId
+      console.log('[DB] Обновление receipt_id у покупок после sync:', localIdToServerId, hashToServerId);
+      // Логируем все receipts и purchases после обновления id
+      const allReceipts = await this.getAllReceipts();
+      console.log('[DB] Все чеки после updateLocalIdsAfterSync:', JSON.stringify(allReceipts, null, 2));
+      const allPurchases = await this.db.getAllAsync('SELECT * FROM purchases');
+      console.log('[DB] Все покупки после updateLocalIdsAfterSync:', JSON.stringify(allPurchases, null, 2));
+    } catch (error) {
+      console.error('[DB] Ошибка при обновлении id после sync:', error);
+    }
+  }
+
+  // Для совместимости: getReceipts = getAllReceipts
+  async getReceipts() {
+    return this.getAllReceipts();
+  }
 }
 
 // Create singleton instance
 const databaseService = new DatabaseService();
 
-export default databaseService; 
+export default databaseService;

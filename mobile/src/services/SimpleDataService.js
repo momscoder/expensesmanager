@@ -99,16 +99,22 @@ class SimpleDataService {
   // Add a new receipt
   async addReceipt(receiptData) {
     try {
+      console.log('SimpleDataService: Starting to add receipt:', receiptData);
+      
       const receipts = await this.getAllReceipts();
       
       // Generate hash for duplicate detection
-      const hash = this.generateReceiptHash(receiptData);
+      const hash = await UtilityService.generateReceiptHashSHA256(receiptData.uid, receiptData.date);
+      console.log('SimpleDataService: Generated hash:', hash);
       
       // Check for duplicates
       const isDuplicate = receipts.some(receipt => receipt.hash === hash);
       if (isDuplicate) {
+        console.log('SimpleDataService: Receipt already exists with hash:', hash);
         throw new Error('Этот чек уже существует');
       }
+
+      console.log('SimpleDataService: No duplicate found, creating new receipt...');
 
       const newReceipt = {
         id: this.nextReceiptId++,
@@ -121,6 +127,8 @@ class SimpleDataService {
         updated_at: new Date().toISOString(),
       };
 
+      console.log('SimpleDataService: Created new receipt object:', newReceipt);
+
       // Assign IDs to purchases
       newReceipt.purchases = newReceipt.purchases.map(purchase => ({
         ...purchase,
@@ -128,13 +136,16 @@ class SimpleDataService {
         receipt_id: newReceipt.id
       }));
 
+      console.log('SimpleDataService: Assigned IDs to purchases:', newReceipt.purchases);
+
       receipts.push(newReceipt);
       await this.saveReceipts(receipts);
+      console.log('SimpleDataService: Receipt saved to AsyncStorage successfully');
       
       dataChangeService.notifyReceiptAdded(newReceipt);
       return newReceipt;
     } catch (error) {
-      console.error('Error adding receipt:', error);
+      console.error('SimpleDataService: Error adding receipt:', error);
       throw error;
     }
   }
@@ -469,16 +480,6 @@ class SimpleDataService {
   }
 
   // ===== UTILITY METHODS =====
-
-  // Generate receipt hash
-  generateReceiptHash(receiptData) {
-    const data = {
-      date: receiptData.date,
-      total_amount: receiptData.total_amount,
-      purchases_count: receiptData.purchases?.length || 0
-    };
-    return UtilityService.generateHash(JSON.stringify(data));
-  }
 
   // Save receipts to storage
   async saveReceipts(receipts) {

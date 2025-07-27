@@ -1,6 +1,8 @@
 import DatabaseService from './DatabaseService';
 import ApiService from './ApiService';
 import * as SecureStore from 'expo-secure-store';
+import { v4 as uuidv4 } from 'uuid';
+import NetInfo from '@react-native-community/netinfo';
 
 class SyncService {
   constructor() {
@@ -10,11 +12,8 @@ class SyncService {
 
   async checkOnlineStatus() {
     try {
-      const response = await fetch('https://www.google.com', { 
-        method: 'HEAD',
-        timeout: 5000 
-      });
-      this.isOnline = response.ok;
+      const state = await NetInfo.fetch();
+      this.isOnline = !!state.isConnected && !!state.isInternetReachable;
       return this.isOnline;
     } catch (error) {
       this.isOnline = false;
@@ -30,46 +29,74 @@ class SyncService {
     this.syncInProgress = true;
 
     try {
+      console.log('[SYNC] Starting sync to server...');
+      
       // Check if user is authenticated
       const token = await SecureStore.getItemAsync('authToken');
       if (!token) {
         throw new Error('User not authenticated');
       }
+      console.log('[SYNC] User is authenticated');
 
       // Check online status
       const isOnline = await this.checkOnlineStatus();
       if (!isOnline) {
         throw new Error('No internet connection');
       }
+      console.log('[SYNC] Internet connection available');
 
       // Get unsynced records
-      const unsyncedRecords = await DatabaseService.getUnsyncedRecords();
+      console.log('[SYNC] Getting unsynced records...');
+      let unsyncedReceipts = await DatabaseService.getUnsyncedRecords();
+      console.log('[SYNC] Found unsynced receipts:', unsyncedReceipts.length);
       
-      if (unsyncedRecords.length === 0) {
-        return { message: 'No data to sync', syncedCount: 0 };
-      }
-
-      // Sync data to server
-      const syncResults = await ApiService.syncData(unsyncedRecords);
+      // Для новых чеков: убрать id, добавить localId и hash
+      unsyncedReceipts = unsyncedReceipts.map(r => {
+        if (!r.id) {
+          return { ...r, localId: r.localId || uuidv4(), hash: r.hash };
+        }
+        return r;
+      });
       
-      // Mark records as synced
-      for (const record of unsyncedRecords) {
-        if (syncResults[record.table_name] && syncResults[record.table_name][record.id]) {
-          const serverId = syncResults[record.table_name][record.id];
-          await DatabaseService.markAsSynced(record.table_name, record.id, serverId);
+      // Извлечь все покупки из чеков
+      let unsyncedPurchases = [];
+      for (const r of unsyncedReceipts) {
+        if (Array.isArray(r.purchases)) {
+          for (const p of r.purchases) {
+            if (!p.id) {
+              unsyncedPurchases.push({ ...p, localId: p.localId || uuidv4(), receipt_id: r.id || null });
+            } else {
+              unsyncedPurchases.push(p);
+            }
+          }
         }
       }
-
-      // Clear sync log
-      await DatabaseService.clearSyncLog();
-
-      return {
-        message: `Successfully synced ${unsyncedRecords.length} records`,
-        syncedCount: unsyncedRecords.length
+      console.log('[SYNC] Found unsynced purchases:', unsyncedPurchases.length);
+      
+      // Формируем payload
+      const payload = {
+        receipts: unsyncedReceipts.map(({ purchases, ...rest }) => rest),
+        purchases: unsyncedPurchases,
+        categories: [] // TODO: добавить категории, если нужно
       };
-
+      console.log('[SYNC] Payload для отправки на сервер:', payload);
+      
+      const response = await ApiService.request('/api/sync', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      console.log('[SYNC] Ответ сервера на sync:', data);
+      
+      // Обработка ответа: обновить локальные id по localIdToServerId/hashToServerId
+      if (data && (data.localIdToServerId || data.hashToServerId)) {
+        await DatabaseService.updateLocalIdsAfterSync(data.localIdToServerId, data.hashToServerId);
+      }
+      
+      console.log('[SYNC] Sync to server completed successfully');
+      return data;
     } catch (error) {
-      console.error('Sync to server failed:', error);
+      console.error('[SYNC] Ошибка syncToServer:', error);
       throw error;
     } finally {
       this.syncInProgress = false;
@@ -116,65 +143,20 @@ class SyncService {
   }
 
   async mergeServerData(serverData) {
-    // Merge receipts
-    if (serverData.receipts) {
-      for (const serverReceipt of serverData.receipts) {
-        // Check if receipt already exists locally
-        const localReceipts = await DatabaseService.getReceipts();
-        const existingReceipt = localReceipts.find(r => r.server_id === serverReceipt.id);
-        
-        if (!existingReceipt) {
-          // Add new receipt from server
-          await DatabaseService.addReceipt({
-            date: serverReceipt.date,
-            product: serverReceipt.product,
-            amount: serverReceipt.amount,
-            category: serverReceipt.category,
-            uid: serverReceipt.uid
-          });
-        } else if (existingReceipt.sync_status === 'synced') {
-          // Update existing receipt if it's synced (server is authoritative)
-          await DatabaseService.updateReceipt(existingReceipt.id, {
-            date: serverReceipt.date,
-            product: serverReceipt.product,
-            amount: serverReceipt.amount,
-            category: serverReceipt.category,
-            uid: serverReceipt.uid
-          });
-        }
-        // If local receipt is modified, keep local changes
-      }
-    }
-
-    // Merge categories
-    if (serverData.categories) {
-      for (const serverCategory of serverData.categories) {
-        const localCategories = await DatabaseService.getCategories();
-        const existingCategory = localCategories.find(c => c.server_id === serverCategory.id);
-        
-        if (!existingCategory) {
-          // Add new category from server
-          await DatabaseService.addCategory({
-            name: serverCategory.name
-          });
-        } else if (existingCategory.sync_status === 'synced') {
-          // Update existing category if it's synced
-          await DatabaseService.updateCategory(existingCategory.id, {
-            name: serverCategory.name
-          });
-        }
-      }
-    }
+    // Импортируем все данные с сервера в локальную базу
+    console.log('[Sync] Импорт данных с сервера в локальную базу...');
+    await DatabaseService.importFromServerData(serverData);
+    console.log('[Sync] Импорт завершён.');
   }
 
   async fullSync() {
     try {
-      // First pull from server
-      await this.pullFromServer();
-      
-      // Then sync local changes to server
+      // Сначала отправляем все локальные изменения на сервер
+      console.log('[Sync] Сначала отправляем локальные изменения на сервер...');
       await this.syncToServer();
-      
+      // Затем получаем все данные с сервера и импортируем их
+      console.log('[Sync] Затем получаем все данные с сервера...');
+      await this.pullFromServer();
       return {
         message: 'Full sync completed successfully'
       };
