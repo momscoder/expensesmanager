@@ -19,10 +19,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { BarChart, LineChart, PieChart } from 'react-native-chart-kit';
 import DatabaseService from '../services/DatabaseService';
-import SimpleDataService from '../services/SimpleDataService';
 import UtilityService from '../services/UtilityService';
 import dataChangeService from '../services/DataChangeService';
-import AuthService from '../services/AuthService';
 
 const { width } = Dimensions.get('window');
 
@@ -34,7 +32,7 @@ const DATE_RANGES = [
   { label: '365 дней', value: 365 },
 ];
 
-export default function DashboardScreen({ onGoToAuth }) {
+export default function DashboardScreen() {
   const [stats, setStats] = useState(null);
   const [expensesByCategory, setExpensesByCategory] = useState([]);
   const [totalExpensesRange, setTotalExpensesRange] = useState([]);
@@ -45,19 +43,13 @@ export default function DashboardScreen({ onGoToAuth }) {
   const [dataChangeListener, setDataChangeListener] = useState(null);
   const [selectedRange, setSelectedRange] = useState(30); // Default 30 days
   const [rangeMenuVisible, setRangeMenuVisible] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Get the appropriate data service based on authentication
   const getDataService = () => {
-    return isAuthenticated ? DatabaseService : SimpleDataService;
+    return DatabaseService;
   };
 
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  useEffect(() => {
-    if (isAuthenticated !== null) {
       loadDashboardData();
       
       // Set up data change listener
@@ -78,18 +70,7 @@ export default function DashboardScreen({ onGoToAuth }) {
           dataChangeService.unsubscribe(dataChangeListener);
         }
       };
-    }
-  }, [selectedRange, isAuthenticated]);
-
-  const checkAuthStatus = async () => {
-    try {
-      const authStatus = await AuthService.isAuthenticated();
-      setIsAuthenticated(authStatus);
-    } catch (error) {
-      console.error('Error checking auth status:', error);
-      setIsAuthenticated(false);
-    }
-  };
+  }, [selectedRange]);
 
   const loadDashboardData = async (showLoading = true) => {
     try {
@@ -126,7 +107,7 @@ export default function DashboardScreen({ onGoToAuth }) {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadDashboardData(false);
-  }, [selectedRange, isAuthenticated]);
+  }, [selectedRange]);
 
   const handleRangeChange = (range) => {
     setSelectedRange(range);
@@ -235,9 +216,6 @@ export default function DashboardScreen({ onGoToAuth }) {
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
                 <Title style={styles.headerTitle}>Дашборд</Title>
-                <Paragraph style={styles.headerSubtitle}>
-                  {isAuthenticated ? 'Авторизованный режим' : 'Гостевой режим'}
-                </Paragraph>
               </View>
               
               <Menu

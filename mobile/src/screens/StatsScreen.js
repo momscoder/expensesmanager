@@ -28,19 +28,16 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import DatabaseService from '../services/DatabaseService';
-import SimpleDataService from '../services/SimpleDataService';
 import UtilityService from '../services/UtilityService';
 import dataChangeService from '../services/DataChangeService';
-import AuthService from '../services/AuthService';
 
-export default function StatsScreen({ navigation }) {
+export default function StatsScreen() {
   const [receipts, setReceipts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [dataChangeListener, setDataChangeListener] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   
   // Category management
   const [categoryDialogVisible, setCategoryDialogVisible] = useState(false);
@@ -69,15 +66,10 @@ export default function StatsScreen({ navigation }) {
   
   // Get the appropriate data service based on authentication
   const getDataService = () => {
-    return isAuthenticated ? DatabaseService : SimpleDataService;
+    return DatabaseService;
   };
 
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  useEffect(() => {
-    if (isAuthenticated !== null) {
       loadData();
       
       // Set up data change listener
@@ -91,18 +83,7 @@ export default function StatsScreen({ navigation }) {
           dataChangeService.unsubscribe(dataChangeListener);
         }
       };
-    }
-  }, [isAuthenticated]);
-
-  const checkAuthStatus = async () => {
-    try {
-      const authStatus = await AuthService.isAuthenticated();
-      setIsAuthenticated(authStatus);
-    } catch (error) {
-      console.error('Error checking auth status:', error);
-      setIsAuthenticated(false);
-    }
-  };
+  }, []);
 
   const loadData = async (showLoading = true) => {
     try {

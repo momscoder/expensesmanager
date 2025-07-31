@@ -27,7 +27,7 @@ class ErrorBoundary extends React.Component {
         <LinearGradient colors={['#1E1E1E', '#121212']} style={styles.container}>
           <Card style={styles.errorCard}>
             <Card.Content>
-              <Title style={styles.errorTitle}>⚠️ Ошибка приложения</Title>
+              <Title style={styles.errorTitle}>Ошибка приложения</Title>
               <Paragraph style={styles.errorMessage}>
                 Произошла неожиданная ошибка. Это может быть связано с проблемами базы данных или сети.
               </Paragraph>

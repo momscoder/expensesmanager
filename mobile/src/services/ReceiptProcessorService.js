@@ -1,22 +1,10 @@
 import { getReceipt } from 'checkchecker';
-import SimpleDataService from './SimpleDataService';
 import DatabaseService from './DatabaseService';
-import UtilityService from './UtilityService';
-import * as SecureStore from 'expo-secure-store';
 
 class ReceiptProcessorService {
   // Get the appropriate data service based on authentication status
   async getDataService() {
-    try {
-      const token = await SecureStore.getItemAsync('authToken');
-      const dataService = token ? DatabaseService : SimpleDataService;
-      console.log('ReceiptProcessorService: Using', token ? 'DatabaseService' : 'SimpleDataService');
-      return dataService;
-    } catch (error) {
-      console.error('Error checking auth status in ReceiptProcessorService:', error);
-      console.log('ReceiptProcessorService: Falling back to SimpleDataService');
-      return SimpleDataService;
-    }
+      return DatabaseService;
   }
 
   // Check if receipt already exists

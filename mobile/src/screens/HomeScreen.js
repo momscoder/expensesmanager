@@ -29,25 +29,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import DatabaseService from '../services/DatabaseService';
-import SimpleDataService from '../services/SimpleDataService';
 import ReceiptProcessorService from '../services/ReceiptProcessorService';
-import ApiService from '../services/ApiService';
-import SyncService from '../services/SyncService';
 import UtilityService from '../services/UtilityService';
-import AuthService from '../services/AuthService';
 import dataChangeService from '../services/DataChangeService';
 import { Camera, CameraView } from 'expo-camera';
 
-export default function HomeScreen({ onGoToAuth }) {
+export default function HomeScreen() {
   const [uid, setUid] = useState('');
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [syncStatus, setSyncStatus] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   
   // Manual receipt entry
   const [manualDialogVisible, setManualDialogVisible] = useState(false);
@@ -66,29 +59,13 @@ export default function HomeScreen({ onGoToAuth }) {
 
   // Get the appropriate data service based on authentication
   const getDataService = () => {
-    return isAuthenticated ? DatabaseService : SimpleDataService;
+    return DatabaseService;
   };
 
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  useEffect(() => {
-    if (isAuthenticated !== null) {
       checkSyncStatus();
       loadCategories();
-    }
-  }, [isAuthenticated]);
-
-  const checkAuthStatus = async () => {
-    try {
-      const authStatus = await AuthService.isAuthenticated();
-      setIsAuthenticated(authStatus);
-    } catch (error) {
-      console.error('Error checking auth status:', error);
-      setIsAuthenticated(false);
-    }
-  };
+  }, []);
 
   const loadCategories = async () => {
     try {
@@ -108,17 +85,6 @@ export default function HomeScreen({ onGoToAuth }) {
     } catch (error) {
       console.error('Error loading categories:', error);
       setCategories([]);
-    }
-  };
-
-  const checkSyncStatus = async () => {
-    if (!isAuthenticated) return;
-    
-    try {
-      const status = await SyncService.getSyncStatus();
-      setSyncStatus(status);
-    } catch (error) {
-      console.error('Error checking sync status:', error);
     }
   };
 
@@ -159,11 +125,6 @@ export default function HomeScreen({ onGoToAuth }) {
         // Clear form
         setUid('');
         setDate(new Date());
-        
-        // Update sync status if authenticated
-        if (isAuthenticated) {
-          await checkSyncStatus();
-        }
       } else {
         // Handle different error codes
         if (result.code === 409) {
@@ -181,42 +142,6 @@ export default function HomeScreen({ onGoToAuth }) {
     } finally {
       setLoading(false);
       setSnackbarVisible(true);
-    }
-  };
-
-  const handleManualSync = async () => {
-    if (!isAuthenticated) return;
-    
-    setSyncLoading(true);
-
-    try {
-      const result = await SyncService.fullSync();
-      setSnackbarMessage(result.message);
-    } catch (error) {
-      console.error('Manual sync failed:', error);
-      setSnackbarMessage('Ошибка синхронизации: ' + UtilityService.getErrorMessage(error));
-    } finally {
-      setSyncLoading(false);
-      setSnackbarVisible(true);
-      await checkSyncStatus();
-    }
-  };
-
-  const handleSyncToServer = async () => {
-    if (!isAuthenticated) return;
-    
-    setSyncLoading(true);
-
-    try {
-      const result = await SyncService.syncToServer();
-      setSnackbarMessage(result.message);
-    } catch (error) {
-      console.error('Sync to server failed:', error);
-      setSnackbarMessage('Ошибка отправки данных: ' + UtilityService.getErrorMessage(error));
-    } finally {
-      setSyncLoading(false);
-      setSnackbarVisible(true);
-      await checkSyncStatus();
     }
   };
 
@@ -292,12 +217,6 @@ export default function HomeScreen({ onGoToAuth }) {
       setManualReceiptName('');
       setManualReceiptDate(new Date());
       setPurchases([]);
-      
-      // Update sync status if authenticated
-      if (isAuthenticated) {
-        await checkSyncStatus();
-      }
-
     } catch (error) {
       console.error('Error adding manual receipt:', error);
       setSnackbarMessage('Ошибка при добавлении чека: ' + UtilityService.getErrorMessage(error));
@@ -364,7 +283,7 @@ export default function HomeScreen({ onGoToAuth }) {
             <Card.Content>
               <Title style={styles.title}>Менеджер расходов</Title>
               <Paragraph style={styles.subtitle}>
-                {isAuthenticated ? 'Авторизованный режим' : 'Гостевой режим'}
+                {'Текст'}
               </Paragraph>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
@@ -434,65 +353,6 @@ export default function HomeScreen({ onGoToAuth }) {
               </Button>
             </Card.Content>
           </Card>
-
-          {/* Sync Status Card (only for authenticated users) */}
-          {isAuthenticated && syncStatus && (
-            <Card style={styles.card}>
-              <Card.Content>
-                <Title style={styles.syncTitle}>Статус синхронизации</Title>
-                <View style={styles.syncInfo}>
-                  <Paragraph style={styles.syncText}>
-                    Последняя синхронизация: {syncStatus.lastSync ? new Date(syncStatus.lastSync).toLocaleString('ru-RU') : 'Никогда'}
-                  </Paragraph>
-                  <Paragraph style={styles.syncText}>
-                    Статус: {syncStatus.isOnline ? 'Онлайн' : 'Офлайн'}
-                  </Paragraph>
-                </View>
-                <View style={styles.syncButtons}>
-                  <Button
-                    mode="outlined"
-                    onPress={handleManualSync}
-                    loading={syncLoading}
-                    disabled={syncLoading}
-                    style={styles.syncButton}
-                    contentStyle={styles.buttonContent}
-                  >
-                    Синхронизировать
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    onPress={handleSyncToServer}
-                    loading={syncLoading}
-                    disabled={syncLoading}
-                    style={styles.syncButton}
-                    contentStyle={styles.buttonContent}
-                  >
-                    Отправить на сервер
-                  </Button>
-                </View>
-              </Card.Content>
-            </Card>
-          )}
-
-          {/* Guest Mode Info */}
-          {!isAuthenticated && (
-            <Card style={styles.card}>
-              <Card.Content>
-                <Title style={styles.guestTitle}>Гостевой режим</Title>
-                <Paragraph style={styles.guestText}>
-                  Данные сохраняются только локально. Для синхронизации с сервером войдите в аккаунт.
-                </Paragraph>
-                <Button
-                  mode="contained"
-                  onPress={onGoToAuth}
-                  style={styles.authButton}
-                  contentStyle={styles.buttonContent}
-                >
-                  Войти в аккаунт
-                </Button>
-              </Card.Content>
-            </Card>
-          )}
         </ScrollView>
       </KeyboardAvoidingView>
 
