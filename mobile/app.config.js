@@ -1,7 +1,7 @@
 export default {
-  name: 'CheckVite Mobile',
-  slug: 'checkvite-mobile',
-  version: '1.0.0',
+  name: 'Менеджер расходов',
+  slug: process.env.EAS_PROJECT_SLUG,
+  version: '0.0.1',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'dark',
@@ -15,14 +15,14 @@ export default {
   ],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.checkvite.mobile'
+    bundleIdentifier: process.env.EAS_PROJECT_BUNDLE_IDENTIFIER
   },
   android: {
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#121212'
     },
-    package: 'com.checkvite.mobile',
+    package: process.env.EAS_PROJECT_PACKAGE,
     permissions: [
       'INTERNET',
       'ACCESS_NETWORK_STATE',
@@ -39,7 +39,7 @@ export default {
   ],
   extra: {
     eas: {
-      projectId: 'your-project-id'
+      projectId: process.env.EAS_PROJECT_ID
     }
   }
 }; 
