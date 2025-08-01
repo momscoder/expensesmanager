@@ -44,22 +44,67 @@ export default async function loadReceipt(db, userId, data, date, uid) {
   }
 
   const positions = JSON.parse(data.message.positions);
-  for (const { product_name, amount } of positions) {
-    if (product_name && amount) {
-      await db.run(
-        'INSERT INTO receipts (date, product, amount, category, user_id) VALUES (?, ?, ?, ?, ?)',
-        [date,
-          cleanProductName(product_name),
-          amount,
-          "",
-          userId]
-      );
+  let totalAmount = 0;
+  
+  // Calculate total amount
+  for (const { amount } of positions) {
+    if (amount) {
+      totalAmount += parseFloat(amount) || 0;
     }
   }
 
-  const hash = generateReceiptHash(uid, date);
-  await db.run(`INSERT INTO used_receipts (receipt_hash, user_id) VALUES (?, ?)`, [hash, userId]);
+  // Generate receipt hash
+  const receiptHash = generateReceiptHash(uid, date);
 
-  console.log('📥 Чек загружен');
-  return 2;
+  return new Promise((resolve, reject) => {
+    // Insert receipt
+    db.run(
+      'INSERT INTO receipts (uid, date, total_amount, hash, user_id) VALUES (?, ?, ?, ?, ?)',
+      [uid, date, totalAmount, receiptHash, userId],
+      function (err) {
+        if (err) {
+          console.error('❌ Error inserting receipt:', err);
+          return reject(err);
+        }
+
+        const receiptId = this.lastID;
+        
+        // Insert purchases
+        const purchaseStmt = db.prepare('INSERT INTO purchases (receipt_id, name, amount, category) VALUES (?, ?, ?, ?)');
+        
+        positions.forEach(({ product_name, amount }) => {
+          if (product_name && amount) {
+            purchaseStmt.run([
+              receiptId,
+              cleanProductName(product_name),
+              parseFloat(amount) || 0,
+              null // No category initially
+            ]);
+          }
+        });
+        
+        purchaseStmt.finalize((err) => {
+          if (err) {
+            console.error('❌ Error inserting purchases:', err);
+            return reject(err);
+          }
+
+          // Insert used receipt hash
+          db.run(
+            'INSERT INTO used_receipts (receipt_hash, user_id) VALUES (?, ?)',
+            [receiptHash, userId],
+            (err) => {
+              if (err) {
+                console.error('❌ Error inserting used receipt:', err);
+                return reject(err);
+              }
+              
+              console.log('📥 Чек загружен');
+              resolve(2);
+            }
+          );
+        });
+      }
+    );
+  });
 }
