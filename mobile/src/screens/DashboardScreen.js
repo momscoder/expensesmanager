@@ -215,7 +215,7 @@ export default function DashboardScreen() {
           <Card.Content>
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
-                <Title style={styles.headerTitle}>Дашборд</Title>
+                <Title style={styles.headerTitle}>Диапазон</Title>
               </View>
               
               <Menu
@@ -258,7 +258,7 @@ export default function DashboardScreen() {
         )}
 
         {/* Last Update Info */}
-        {lastUpdate && (
+        {/*{lastUpdate && (
           <Card style={styles.updateCard}>
             <Card.Content>
               <View style={styles.updateInfo}>
@@ -269,7 +269,7 @@ export default function DashboardScreen() {
               </View>
             </Card.Content>
           </Card>
-        )}
+        )}*/}
 
         {/* Summary Stats */}
         {stats && (

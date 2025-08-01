@@ -124,7 +124,7 @@ export default function StatsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadData(false);
-  }, [isAuthenticated]);
+  }, []);
 
   const formatCurrency = (amount) => {
     return UtilityService.formatCurrency(amount);
@@ -206,7 +206,7 @@ export default function StatsScreen() {
     try {
       const dataService = getDataService();
       
-      if (isAuthenticated) {
+      /*if (isAuthenticated) {
         // For DatabaseService, we need to update the receipt
         const receipt = receipts.find(r => 
           r.purchases.some(p => p.id === editingPurchase.id)
@@ -223,10 +223,10 @@ export default function StatsScreen() {
             purchases: updatedPurchases
           });
         }
-      } else {
+      } else {*/
         // For SimpleDataService, use the dedicated method
         await dataService.updatePurchaseCategory(editingPurchase.id, newPurchaseCategory.trim());
-      }
+      //}
       
       setPurchaseDialogVisible(false);
       await loadData(false);
@@ -365,12 +365,6 @@ export default function StatsScreen() {
         <Card style={styles.headerCard}>
           <Card.Content>
             <View style={styles.headerRow}>
-              <View style={styles.headerLeft}>
-                <Title style={styles.headerTitle}>Все чеки</Title>
-                <Paragraph style={styles.headerSubtitle}>
-                  {isAuthenticated ? 'Авторизованный режим' : 'Гостевой режим'}
-                </Paragraph>
-              </View>
               <Button
                 mode="outlined"
                 onPress={handleAddCategory}

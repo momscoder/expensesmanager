@@ -63,7 +63,6 @@ export default function HomeScreen() {
   };
 
   useEffect(() => {
-      checkSyncStatus();
       loadCategories();
   }, []);
 
@@ -283,7 +282,7 @@ export default function HomeScreen() {
             <Card.Content>
               <Title style={styles.title}>Менеджер расходов</Title>
               <Paragraph style={styles.subtitle}>
-                {'Текст'}
+                Смерть в нищите.
               </Paragraph>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>

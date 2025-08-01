@@ -43,10 +43,10 @@ function MainTabs() {
 
           switch (route.name) {
             case 'Home':
-              iconName = focused ? 'home' : 'home-outline';
+              iconName = focused ? 'create' : 'create-outline';
               break;
             case 'Stats':
-              iconName = focused ? 'stats-chart' : 'stats-chart-outline';
+              iconName = focused ? 'pricetags' : 'pricetags-outline';
               break;
             case 'Dashboard':
               iconName = focused ? 'pie-chart' : 'pie-chart-outline';
@@ -71,19 +71,19 @@ function MainTabs() {
     >
       <Tab.Screen 
         name="Home" 
-        options={{ title: '', headerShown: false }}
+        options={{ title: 'Чек', headerShown: false }}
       >
         {(props) => <HomeScreen {...props} />}
       </Tab.Screen>
       <Tab.Screen 
         name="Stats" 
-        options={{ title: '', headerShown: false }}
+        options={{ title: 'Покупки', headerShown: false }}
       >
         {(props) => <StatsScreen {...props} />}
       </Tab.Screen>
       <Tab.Screen 
         name="Dashboard" 
-        options={{ title: '', headerShown: false }}
+        options={{ title: 'Статистика', headerShown: false }}
       >
         {(props) => <DashboardScreen {...props} />}
       </Tab.Screen>
@@ -127,9 +127,6 @@ export default function App() {
                   />
                 )}
               </Stack.Screen>
-            <Stack.Screen name="Profile">
-              {props => <ProfileScreen {...props} />}
-            </Stack.Screen>
           </Stack.Navigator>
         </NavigationContainer>
       </PaperProvider>
